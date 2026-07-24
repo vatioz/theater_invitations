@@ -12,6 +12,7 @@ public sealed class InvitationParty
     public InvitationStatus Status { get; private set; } = InvitationStatus.Pending;
     public string? AccessibilityRequirements { get; private set; }
     public DateTimeOffset? RespondedAtUtc { get; private set; }
+    public uint Version { get; private set; }
 
     public bool IsEffectivelyExpired(DateTimeOffset deadlineUtc, DateTimeOffset nowUtc) =>
         Status == InvitationStatus.Expired || (Status == InvitationStatus.Pending && nowUtc >= deadlineUtc);

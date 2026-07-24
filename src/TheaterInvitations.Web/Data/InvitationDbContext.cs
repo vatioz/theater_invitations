@@ -33,6 +33,7 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.Company).HasMaxLength(200);
             entity.Property(x => x.TokenHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.AccessibilityRequirements).HasMaxLength(500);
+            entity.Property(x => x.Version).IsRowVersion();
             entity.HasIndex(x => x.TokenHash).IsUnique();
             entity.ToTable(table => table.HasCheckConstraint("CK_InvitationParties_AllocatedSeats", "\"AllocatedSeats\" > 0"));
         });
