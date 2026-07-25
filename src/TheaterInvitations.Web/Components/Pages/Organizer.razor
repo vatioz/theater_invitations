@@ -122,6 +122,10 @@
                     <option value="">All statuses</option>
                     @foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }
                 </InputSelect>
+                <InputSelect @bind-Value="filters.BatchId">
+                    <option value="">All batches</option>
+                    @foreach (var batch in batches) { <option value="@batch.Id">@batch.Name</option> }
+                </InputSelect>
                 <button type="submit">Filter</button>
             </EditForm>
             <div class="party-grid-wrap">
@@ -204,17 +208,29 @@
     private readonly CorrectionModel correction = new();
     private readonly OverrideModel overrideModel = new();
     private readonly EventConfigurationModel eventConfiguration = new();
+    private IReadOnlyList<OrganizerBatch> batches = Array.Empty<OrganizerBatch>();
     private bool confirmingLock;
     private string? actionError;
 
-    protected override async Task OnInitializedAsync() => await RefreshDashboardAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshDashboardAsync();
+        batches = await OrganizerService.GetBatchesAsync();
+    }
 
     private async Task PreviewAsync(InputFileChangeEventArgs args)
     {
         await RequireRoleAsync("Operator", "ElevatedOperator");
-        await using var stream = args.File.OpenReadStream(1_000_000);
-        using var reader = new StreamReader(stream);
-        preview = await OrganizerService.PreviewImportAsync(await reader.ReadToEndAsync());
+        try
+        {
+            await using var stream = args.File.OpenReadStream(1_000_000);
+            using var reader = new StreamReader(stream, new System.Text.UTF8Encoding(false, true), true);
+            preview = await OrganizerService.PreviewImportAsync(await reader.ReadToEndAsync());
+        }
+        catch (IOException)
+        {
+            preview = new ImportPreview(Array.Empty<ImportRow>(), new[] { "CSV must be valid UTF-8 and 1 MB or smaller." });
+        }
     }
 
     private async Task CommitAsync()
@@ -227,6 +243,7 @@
                 await OrganizerService.CommitImportAsync(preview, "Imported batch");
                 preview = null;
                 await RefreshDashboardAsync();
+                batches = await OrganizerService.GetBatchesAsync();
             }
             catch (InvalidOperationException exception)
             {
@@ -293,7 +310,7 @@
     }
 
     private ValueTask<GridItemsProviderResult<OrganizerParty>> ProvideParties(GridItemsProviderRequest<OrganizerParty> request) =>
-        OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status);
+        OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status, filters.BatchId);
 
     private ValueTask<GridItemsProviderResult<OrganizerAudit>> ProvideAudits(GridItemsProviderRequest<OrganizerAudit> request) =>
         OrganizerService.GetAuditsAsync(request);
@@ -338,7 +355,7 @@
         }
     }
 
-    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } }
+    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } public Guid? BatchId { get; set; } }
     private sealed class CorrectionModel
     {
         [Required] public string Name { get; set; } = string.Empty;

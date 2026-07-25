@@ -60,6 +60,37 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Preview_rejects_invalid_email_and_preserves_unicode_multiline_fields()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        var invalid = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex,not-an-email,,1");
+        var valid = await service.PreviewImportAsync("\uFEFFprimary_guest_name,email,company,allocated_seats\n Žaneta , zaneta@example.test ,\"Divadlo\nČeský Krumlov\",1");
+
+        Assert.Equal("Row 2: email must be a valid address.", Assert.Single(invalid.Errors));
+        Assert.True(valid.IsValid);
+        Assert.Equal("Žaneta", valid.ValidRows.Single().Name);
+        Assert.Equal("zaneta@example.test", valid.ValidRows.Single().Email);
+        Assert.Equal("Divadlo\nČeský Krumlov", valid.ValidRows.Single().Company);
+    }
+
+    [Fact]
+    public async Task Preview_reports_malformed_csv_and_size_limit()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        var malformed = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex,alex@example.test,\"Unclosed,1");
+        var oversized = await service.PreviewImportAsync(new string('a', 1_000_001));
+
+        Assert.Contains("Malformed CSV", Assert.Single(malformed.Errors));
+        Assert.Equal("CSV must be 1 MB or smaller.", Assert.Single(oversized.Errors));
+    }
+
+    [Fact]
     public async Task Correction_updates_party_and_records_the_organizer()
     {
         await using var db = CreateDb();
@@ -76,6 +107,18 @@ public sealed class OrganizerServiceTests
         var audit = await db.AuditEvents.SingleAsync();
         Assert.Equal("PartyCorrected", audit.EventType);
         Assert.Equal("Development Operator", audit.ActorIdentifier);
+    }
+
+    [Fact]
+    public async Task Correction_rejects_invalid_email_server_side()
+    {
+        await using var db = CreateDb();
+        var party = await AddPartyAsync(db);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, "not-an-email", null, 1));
+
+        Assert.Equal(party.Email, (await db.InvitationParties.SingleAsync()).Email);
     }
 
     [Fact]
@@ -110,6 +153,49 @@ public sealed class OrganizerServiceTests
         Assert.Equal(1, result.PartyCount);
         Assert.Single(result.Parties);
         Assert.Equal("Morgan Guest", result.Parties.Single().Name);
+    }
+
+    [Fact]
+    public async Task Dashboard_active_pending_and_remaining_capacity_exclude_effectively_expired_parties()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var activeBatch = new InvitationBatch { Name = "Active", DeadlineUtc = new DateTimeOffset(2026, 7, 25, 13, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var expiredBatch = new InvitationBatch { Name = "Expired", DeadlineUtc = new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(activeBatch, expiredBatch);
+        db.AddRange(
+            new InvitationParty { BatchId = activeBatch.Id, PrimaryGuestName = "Confirmed", Email = "confirmed@example.test", AllocatedSeats = 2, TokenHash = RsvpService.HashToken("confirmed") },
+            new InvitationParty { BatchId = activeBatch.Id, PrimaryGuestName = "Pending", Email = "pending@example.test", AllocatedSeats = 3, TokenHash = RsvpService.HashToken("pending") },
+            new InvitationParty { BatchId = expiredBatch.Id, PrimaryGuestName = "Expired pending", Email = "expired@example.test", AllocatedSeats = 4, TokenHash = RsvpService.HashToken("expired") });
+        await db.SaveChangesAsync();
+        var confirmed = await db.InvitationParties.SingleAsync(x => x.Email == "confirmed@example.test");
+        confirmed.OverrideStatus(InvitationStatus.Confirmed, DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync();
+
+        var dashboard = await CreateService(db).GetDashboardAsync();
+
+        Assert.Equal(2, dashboard.ConfirmedSeats);
+        Assert.Equal(3, dashboard.ActivePendingSeats);
+        Assert.Equal(5, dashboard.RemainingCapacity);
+    }
+
+    [Fact]
+    public async Task Party_queries_filter_by_stable_batch_id()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var first = new InvitationBatch { Name = "First", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var second = new InvitationBatch { Name = "Second", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(first, second);
+        db.AddRange(
+            new InvitationParty { BatchId = first.Id, PrimaryGuestName = "First guest", Email = "first@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("first") },
+            new InvitationParty { BatchId = second.Id, PrimaryGuestName = "Second guest", Email = "second@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("second") });
+        await db.SaveChangesAsync();
+
+        var dashboard = await CreateService(db).GetDashboardAsync(new PartyQuery(BatchId: second.Id));
+
+        Assert.Equal(1, dashboard.PartyCount);
+        Assert.Equal("Second guest", Assert.Single(dashboard.Parties).Name);
     }
 
     [Fact]

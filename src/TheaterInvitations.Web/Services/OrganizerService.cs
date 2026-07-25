@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Data;
 using System.Security.Cryptography;
+using System.Text;
+using Microsoft.VisualBasic.FileIO;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Components.QuickGrid;
 using TheaterInvitations.Domain;
@@ -84,9 +86,25 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             Outcome = x.Outcome,
             Actor = x.ActorIdentifier ?? x.ActorCategory
         }).ToListAsync(cancellationToken);
-        var statusCounts = await db.InvitationParties.GroupBy(x => x.Status).Select(x => new { Status = x.Key, Seats = x.Sum(p => p.AllocatedSeats) }).ToListAsync(cancellationToken);
-        return new OrganizerDashboard(configuration?.IsRsvpLocked ?? false, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Confirmed)?.Seats ?? 0, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Pending)?.Seats ?? 0, (configuration?.Capacity ?? 0) - reserved, totalParties, parties, audits, query, (int)Math.Ceiling(totalParties / (double)query.PageSize), configuration);
+        var metrics = await (from party in db.InvitationParties
+                             join batch in db.InvitationBatches on party.BatchId equals batch.Id
+                             group party.AllocatedSeats by new
+                             {
+                                 IsConfirmed = party.Status == InvitationStatus.Confirmed,
+                                 IsActivePending = party.Status == InvitationStatus.Pending && batch.DeadlineUtc > now
+                             }
+                             into groupByStatus
+                             select new { groupByStatus.Key, Seats = groupByStatus.Sum() }).ToListAsync(cancellationToken);
+        var confirmedSeats = metrics.Where(x => x.Key.IsConfirmed).Sum(x => x.Seats);
+        var activePendingSeats = metrics.Where(x => x.Key.IsActivePending).Sum(x => x.Seats);
+        return new OrganizerDashboard(configuration?.IsRsvpLocked ?? false, confirmedSeats, activePendingSeats, (configuration?.Capacity ?? 0) - reserved, totalParties, parties, audits, query, (int)Math.Ceiling(totalParties / (double)query.PageSize), configuration);
     }
+
+    public async Task<IReadOnlyList<OrganizerBatch>> GetBatchesAsync(CancellationToken cancellationToken = default) =>
+        await db.InvitationBatches.AsNoTracking()
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => new OrganizerBatch(x.Id, x.Name))
+            .ToListAsync(cancellationToken);
 
     public async Task SaveEventConfigurationAsync(EventConfigurationInput input, uint? expectedVersion, CancellationToken cancellationToken = default)
     {
@@ -176,9 +194,11 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
 
     public async Task<ImportPreview> PreviewImportAsync(string csv, CancellationToken cancellationToken = default)
     {
-        var rows = ParseCsv(csv);
-        var errors = new List<string>();
+        var parsed = ParseCsv(csv);
+        var rows = parsed.Rows;
+        var errors = parsed.Errors.ToList();
         var valid = new List<ImportRow>();
+        if (errors.Count > 0) return new ImportPreview(valid, errors);
         if (rows.Count == 0 || !rows[0].SequenceEqual(new[] { "primary_guest_name", "email", "company", "allocated_seats" }, StringComparer.Ordinal)) return new ImportPreview(valid, new[] { "CSV must use the canonical header row." });
         var existing = await db.InvitationParties.Select(x => x.Email.ToUpper()).ToListAsync(cancellationToken);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -194,15 +214,19 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             {
                 errors.Add($"Row {rowNumber}: primary_guest_name is required."); continue;
             }
-            if (string.IsNullOrWhiteSpace(fields[1]))
+            string email;
+            try
             {
-                errors.Add($"Row {rowNumber}: email is required."); continue;
+                email = PartyEmailValidation.Normalize(fields[1]);
+            }
+            catch (ArgumentException)
+            {
+                errors.Add($"Row {rowNumber}: email must be a valid address."); continue;
             }
             if (!int.TryParse(fields[3], CultureInfo.InvariantCulture, out var seats) || seats <= 0)
             {
                 errors.Add($"Row {rowNumber}: allocated_seats must be a positive integer."); continue;
             }
-            var email = fields[1].Trim();
             if (!seen.Add(email) || existing.Contains(email.ToUpperInvariant())) { errors.Add($"Row {rowNumber}: email is already invited or duplicated in this upload."); continue; }
             valid.Add(new ImportRow(fields[0].Trim(), email, string.IsNullOrWhiteSpace(fields[2]) ? null : fields[2].Trim(), seats));
         }
@@ -251,9 +275,10 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
             var party = await operationDb.InvitationParties.SingleAsync(x => x.Id == partyId, token);
             if (party.Version != expectedVersion) throw new StaleDataException("This party changed after you opened it. The latest values have been loaded.");
-            if (await operationDb.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == email.Trim().ToUpper(), token)) throw new InvalidOperationException("Email is already invited.");
+            var normalizedEmail = PartyEmailValidation.Normalize(email);
+            if (await operationDb.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == normalizedEmail.ToUpper(), token)) throw new InvalidOperationException("Email is already invited.");
             if (seats > party.AllocatedSeats && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) - party.AllocatedSeats + seats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) throw new InvalidOperationException("The correction would exceed remaining capacity.");
-            party.CorrectDetails(name, email, company, seats);
+            party.CorrectDetails(name, normalizedEmail, company, seats);
             AddAudit(operationDb, "PartyCorrected", "Accepted", null, partyId, actor, null);
             await operationDb.SaveChangesAsync(token);
             if (transaction is not null) await transaction.CommitAsync(token);
@@ -292,35 +317,49 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     }
     private void AddAudit(InvitationDbContext operationDb, string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) => operationDb.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting });
 
-    private static List<string[]> ParseCsv(string text)
+    private static CsvParseResult ParseCsv(string text)
     {
-        var rows = new List<string[]>();
-        var fields = new List<string>();
-        var field = new System.Text.StringBuilder();
-        var quoted = false;
-        for (var index = 0; index < text.Length; index++)
+        if (string.IsNullOrWhiteSpace(text)) return new CsvParseResult(Array.Empty<string[]>(), Array.Empty<string>());
+        try
         {
-            var character = text[index];
-            if (character == '"' && quoted && index + 1 < text.Length && text[index + 1] == '"') { field.Append(character); index++; }
-            else if (character == '"') quoted = !quoted;
-            else if (character == ',' && !quoted) { fields.Add(field.ToString()); field.Clear(); }
-            else if ((character == '\r' || character == '\n') && !quoted)
+            if (new UTF8Encoding(false, true).GetByteCount(text) > 1_000_000)
             {
-                if (character == '\r' && index + 1 < text.Length && text[index + 1] == '\n') index++;
-                fields.Add(field.ToString()); field.Clear();
-                if (fields.Any(x => x.Length > 0)) rows.Add(fields.ToArray());
-                fields.Clear();
+                return new CsvParseResult(Array.Empty<string[]>(), new[] { "CSV must be 1 MB or smaller." });
             }
-            else field.Append(character);
         }
-        if (quoted) return new List<string[]>();
-        if (field.Length > 0 || fields.Count > 0) { fields.Add(field.ToString()); rows.Add(fields.ToArray()); }
-        return rows;
+        catch (EncoderFallbackException)
+        {
+            return new CsvParseResult(Array.Empty<string[]>(), new[] { "CSV must be valid UTF-8 text." });
+        }
+
+        var rows = new List<string[]>();
+        try
+        {
+            using var parser = new TextFieldParser(new StringReader(text.TrimStart('\uFEFF')))
+            {
+                TextFieldType = FieldType.Delimited,
+                HasFieldsEnclosedInQuotes = true,
+                TrimWhiteSpace = false
+            };
+            parser.SetDelimiters(",");
+            while (!parser.EndOfData)
+            {
+                rows.Add(parser.ReadFields() ?? Array.Empty<string>());
+            }
+        }
+        catch (MalformedLineException exception)
+        {
+            return new CsvParseResult(Array.Empty<string[]>(), new[] { $"Malformed CSV near line {exception.LineNumber}. Check quoted fields and delimiters." });
+        }
+
+        return new CsvParseResult(rows, Array.Empty<string>());
     }
 }
 
 public sealed record ImportRow(string Name, string Email, string? Company, int AllocatedSeats);
 public sealed record ImportPreview(IReadOnlyList<ImportRow> ValidRows, IReadOnlyList<string> Errors) { public int TotalSeats => ValidRows.Sum(x => x.AllocatedSeats); public bool IsValid => Errors.Count == 0; }
+public sealed record OrganizerBatch(Guid Id, string Name);
+internal sealed record CsvParseResult(IReadOnlyList<string[]> Rows, IReadOnlyList<string> Errors);
 public sealed record PartyQuery(string? Search = null, InvitationStatus? Status = null, Guid? BatchId = null, int Page = 1, int PageSize = 25);
 public sealed class OrganizerParty
 {

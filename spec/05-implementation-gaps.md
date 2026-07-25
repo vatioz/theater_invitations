@@ -49,11 +49,11 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| O1 | Email syntax validation | High | Open | Validate email syntax server-side on imports and corrections; presence and browser validation are insufficient. |
+| O1 | Email syntax validation | High | Completed | Imports and corrections validate normalized email syntax server-side before duplicate and capacity checks. |
 | O2 | Confirmation for destructive actions | Medium | Open | Global lock already confirms. Add confirmation for status overrides and consequential corrections, especially seat reductions or email changes. |
-| O3 | Effective-status dashboard metrics | High | Open | Exclude effectively expired pending parties from pending-seat metrics so dashboard metrics match capacity calculations. |
-| O4 | CSV parser hardening | Medium | Open | Improve malformed-input diagnostics and test multiline fields, Unicode, encoding, and size limits. A mature CSV library is an alternative. |
-| O5 | Batch filter and grid refinements | Low | Open | Add a batch filter to QuickGrid. Sorting and pagination are implemented. |
+| O3 | Effective-status dashboard metrics | High | Completed | Active pending seats now exclude pending parties at or past their deadline, matching the capacity calculation. |
+| O4 | CSV parser hardening | Medium | Completed | The quoted-field parser reports malformed CSV, preserves multiline Unicode fields, accepts UTF-8 BOM input, and enforces a 1 MB limit. |
+| O5 | Batch filter and grid refinements | Low | Completed | QuickGrid includes a stable batch-ID filter; sorting and pagination remain available. |
 
 ## Batch Management
 
