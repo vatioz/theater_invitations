@@ -36,3 +36,13 @@ dotnet run --project src/TheaterInvitations.Web
 ```
 
 In Development, the application idempotently seeds one party after migrations. Open `https://localhost:7238/rsvp/development-rsvp-token`, confirm or decline the two-seat party, then reload the page to inspect the recorded response. The test token is for local Development only; do not deploy it or use it for real invitations.
+
+## Development Organizer Access
+
+Development provides local-only cookie login personas. Open one of these URLs, then go to `/organizer`:
+
+- `https://localhost:7238/dev/login/Viewer` for read-only dashboard and audit access.
+- `https://localhost:7238/dev/login/Operator` for CSV preview and import.
+- `https://localhost:7238/dev/login/ElevatedOperator` for global RSVP lock changes.
+
+These endpoints do not exist outside Development. Production authentication will be supplied by the host and must emit the same organizer role claims.
