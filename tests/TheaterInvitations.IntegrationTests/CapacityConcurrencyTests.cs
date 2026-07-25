@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
@@ -67,12 +69,35 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
         Assert.Equal(1, await ReservedSeatsAsync());
     }
 
+    [Fact]
+    public async Task Concurrent_support_email_updates_reject_the_stale_writer()
+    {
+        await database.ResetAsync();
+        await SeedConfigurationAsync(capacity: 10);
+        uint version;
+        await using (var db = database.CreateDbContext())
+        {
+            version = (await db.EventConfigurations.AsNoTracking().SingleAsync()).Version;
+        }
+
+        var results = await RunCapturingAsync(
+            () => CreateOrganizerService().UpdateSupportEmailAsync("first@theater.org", version),
+            () => CreateOrganizerService().UpdateSupportEmailAsync("second@theater.org", version));
+
+        Assert.Single(results, result => result is null);
+        await using var verificationDb = database.CreateDbContext();
+        var configuration = await verificationDb.EventConfigurations.AsNoTracking().SingleAsync();
+        Assert.Contains(configuration.SupportEmail, new[] { "first@theater.org", "second@theater.org" });
+        Assert.Single(await verificationDb.AuditEvents.Where(x => x.EventType == "SupportEmailChanged" && x.Outcome == "Accepted").ToListAsync());
+        Assert.Single(await verificationDb.AuditEvents.Where(x => x.EventType == "SupportEmailChanged" && x.Outcome == "Rejected" && x.ReasonCategory == "stale").ToListAsync());
+    }
+
     private RsvpService CreateRsvpService() => new(database, new FixedClock(), new TransactionRetry());
 
     private OrganizerService CreateOrganizerService()
     {
         var db = database.CreateDbContext();
-        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry());
+        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment());
     }
 
     private async Task<List<InvitationParty>> SeedPendingPartiesAsync(int capacity, int count)
@@ -99,7 +124,18 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
     private async Task SeedConfigurationAsync(int capacity)
     {
         await using var db = database.CreateDbContext();
-        db.Add(new EventConfiguration { Capacity = capacity, TimeZoneId = "Europe/Prague", SupportEmail = "rsvp@example.test", AccessibilityTextLimit = 500 });
+        db.Add(new EventConfiguration
+        {
+            Capacity = capacity,
+            EventName = "Theater Gala",
+            DoorsAtUtc = new DateTimeOffset(2026, 8, 1, 16, 0, 0, TimeSpan.Zero),
+            StartsAtUtc = new DateTimeOffset(2026, 8, 1, 17, 0, 0, TimeSpan.Zero),
+            VenueName = "Main Theater",
+            VenueAddress = "1 Theater Street",
+            TimeZoneId = "Europe/Prague",
+            SupportEmail = "rsvp@example.test",
+            AccessibilityTextLimit = 500
+        });
         await db.SaveChangesAsync();
     }
 
@@ -117,4 +153,11 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
 
     private sealed class FixedClock : IClock { public DateTimeOffset UtcNow => Now; }
     private sealed class AllowedAuthorization : IOrganizerAuthorization { public Task<string> RequireAsync(string policy, CancellationToken cancellationToken = default) => Task.FromResult("Integration Operator"); }
+    private sealed class TestEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Development;
+        public string ApplicationName { get; set; } = "Tests";
+        public string ContentRootPath { get; set; } = string.Empty;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
 }

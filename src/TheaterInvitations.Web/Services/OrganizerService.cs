@@ -8,7 +8,7 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry)
+public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment)
 {
     public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
     {
@@ -59,7 +59,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     {
         query ??= new PartyQuery();
         var now = clock.UtcNow;
-        var configuration = await db.EventConfigurations.SingleAsync(cancellationToken);
+        var configuration = await db.EventConfigurations.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         var partyQuery = from party in db.InvitationParties join batch in db.InvitationBatches on party.BatchId equals batch.Id select new { party, batch };
         if (!string.IsNullOrWhiteSpace(query.Search)) partyQuery = partyQuery.Where(x => x.party.PrimaryGuestName.Contains(query.Search) || x.party.Email.Contains(query.Search) || (x.party.Company != null && x.party.Company.Contains(query.Search)));
         if (query.Status is not null) partyQuery = partyQuery.Where(x => x.party.Status == query.Status);
@@ -85,7 +85,93 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             Actor = x.ActorIdentifier ?? x.ActorCategory
         }).ToListAsync(cancellationToken);
         var statusCounts = await db.InvitationParties.GroupBy(x => x.Status).Select(x => new { Status = x.Key, Seats = x.Sum(p => p.AllocatedSeats) }).ToListAsync(cancellationToken);
-        return new OrganizerDashboard(configuration.IsRsvpLocked, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Confirmed)?.Seats ?? 0, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Pending)?.Seats ?? 0, configuration.Capacity - reserved, totalParties, parties, audits, query, (int)Math.Ceiling(totalParties / (double)query.PageSize));
+        return new OrganizerDashboard(configuration?.IsRsvpLocked ?? false, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Confirmed)?.Seats ?? 0, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Pending)?.Seats ?? 0, (configuration?.Capacity ?? 0) - reserved, totalParties, parties, audits, query, (int)Math.Ceiling(totalParties / (double)query.PageSize), configuration);
+    }
+
+    public async Task SaveEventConfigurationAsync(EventConfigurationInput input, uint? expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
+        EventConfigurationValidation.ValidateTimeZone(input.TimeZoneId);
+        string supportEmail;
+        try
+        {
+            supportEmail = string.IsNullOrWhiteSpace(input.SupportEmail)
+                ? string.Empty
+                : EventConfigurationValidation.NormalizeSupportEmail(input.SupportEmail, environment.IsDevelopment());
+        }
+        catch (ArgumentException)
+        {
+            await RecordSupportEmailAuditAsync("Rejected", actor, "invalid-email", cancellationToken);
+            throw;
+        }
+        if (input.Capacity <= 0 || input.AccessibilityTextLimit < 0)
+        {
+            throw new ArgumentException("Capacity must be positive and the accessibility limit cannot be negative.");
+        }
+
+        await using var operationDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var configuration = await operationDb.EventConfigurations.SingleOrDefaultAsync(cancellationToken);
+        var isNewConfiguration = configuration is null;
+        var supportEmailChanged = isNewConfiguration || !string.Equals(configuration!.SupportEmail, supportEmail, StringComparison.OrdinalIgnoreCase);
+        if (configuration is null)
+        {
+            configuration = new EventConfiguration();
+            operationDb.EventConfigurations.Add(configuration);
+        }
+        else if (expectedVersion is not null && configuration.Version != expectedVersion)
+        {
+            throw new StaleDataException("The event configuration changed after you opened it. The current values have been loaded.");
+        }
+
+        configuration.Capacity = input.Capacity;
+        configuration.EventName = input.EventName.Trim();
+        configuration.DoorsAtUtc = EventConfigurationValidation.ToUtc(input.DoorsLocal, input.TimeZoneId);
+        configuration.StartsAtUtc = EventConfigurationValidation.ToUtc(input.StartsLocal, input.TimeZoneId);
+        configuration.VenueName = input.VenueName.Trim();
+        configuration.VenueAddress = input.VenueAddress.Trim();
+        configuration.DressCode = string.IsNullOrWhiteSpace(input.DressCode) ? null : input.DressCode.Trim();
+        configuration.TimeZoneId = input.TimeZoneId.Trim();
+        configuration.SupportEmail = supportEmail;
+        configuration.AccessibilityTextLimit = input.AccessibilityTextLimit;
+        EventConfigurationValidation.ValidateEventTimes(configuration);
+        AddAudit(operationDb, "EventConfigurationSaved", "Accepted", null, null, actor, null);
+        if (supportEmailChanged) AddAudit(operationDb, "SupportEmailChanged", "Accepted", null, null, actor, null);
+        await operationDb.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateSupportEmailAsync(string email, uint expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
+        string normalizedEmail;
+        try
+        {
+            normalizedEmail = EventConfigurationValidation.NormalizeSupportEmail(email, environment.IsDevelopment());
+        }
+        catch (ArgumentException)
+        {
+            await RecordSupportEmailAuditAsync("Rejected", actor, "invalid-email", cancellationToken);
+            throw;
+        }
+
+        await using var operationDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var configuration = await operationDb.EventConfigurations.SingleAsync(cancellationToken);
+        if (configuration.Version != expectedVersion)
+        {
+            await RecordSupportEmailAuditAsync("Rejected", actor, "stale", cancellationToken);
+            throw new StaleDataException("The support address changed after you opened it. The current address has been loaded.");
+        }
+
+        configuration.SupportEmail = normalizedEmail;
+        AddAudit(operationDb, "SupportEmailChanged", "Accepted", null, null, actor, null);
+        try
+        {
+            await operationDb.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await RecordSupportEmailAuditAsync("Rejected", actor, "stale", cancellationToken);
+            throw new StaleDataException("The support address changed after you opened it. The current address has been loaded.");
+        }
     }
 
     public async Task<ImportPreview> PreviewImportAsync(string csv, CancellationToken cancellationToken = default)
@@ -198,6 +284,12 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
 
     private async Task<int> ReservedSeatsAsync(DateTimeOffset now, CancellationToken cancellationToken) => await (from party in db.InvitationParties join batch in db.InvitationBatches on party.BatchId equals batch.Id where party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && batch.DeadlineUtc > now) select party.AllocatedSeats).SumAsync(cancellationToken);
     private static async Task<int> ReservedSeatsAsync(InvitationDbContext operationDb, DateTimeOffset now, CancellationToken cancellationToken) => await (from party in operationDb.InvitationParties join batch in operationDb.InvitationBatches on party.BatchId equals batch.Id where party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && batch.DeadlineUtc > now) select party.AllocatedSeats).SumAsync(cancellationToken);
+    private async Task RecordSupportEmailAuditAsync(string outcome, string actor, string reason, CancellationToken cancellationToken)
+    {
+        await using var auditDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        AddAudit(auditDb, "SupportEmailChanged", outcome, null, null, actor, reason);
+        await auditDb.SaveChangesAsync(cancellationToken);
+    }
     private void AddAudit(InvitationDbContext operationDb, string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) => operationDb.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting });
 
     private static List<string[]> ParseCsv(string text)
@@ -248,4 +340,5 @@ public sealed class OrganizerAudit
     public string Outcome { get; init; } = string.Empty;
     public string Actor { get; init; } = string.Empty;
 }
-public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits, PartyQuery Query, int PageCount);
+public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits, PartyQuery Query, int PageCount, EventConfiguration? Configuration);
+public sealed record EventConfigurationInput(int Capacity, string EventName, DateTime DoorsLocal, DateTime StartsLocal, string VenueName, string VenueAddress, string? DressCode, string TimeZoneId, string? SupportEmail, int AccessibilityTextLimit);

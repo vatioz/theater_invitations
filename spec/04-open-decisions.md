@@ -13,7 +13,7 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 | OD-05 | Does global lock block only guests, or organizers too? | Decided | Requestor | Block guest mutations; permit explicit audited organizer overrides. | Phase 1 |
 | OD-06 | What event time zone governs deadlines? | Decided | Requestor | Use the venue's local time zone and display it beside every deadline. | Phases 0 and 2 |
 | OD-07 | What event details appear on the RSVP page? | Decided | Requestor | Date, doors time, start time, venue, address, dress code when applicable. | Phase 2 |
-| OD-08 | What organizer support address appears to guests? | Decided | Requestor | Use a monitored event-specific mailbox. | Phase 2 |
+| OD-08 | What organizer support address appears to guests? | Decided | Requestor | Persist a monitored event-specific mailbox; all authorized organizers may view it and only `ElevatedOperator` users may change it. | Phase 2 |
 | OD-09 | What character limit and wording apply to accessibility requests? | Decided | Requestor and theater | Start with 500 characters pending theater feedback. | Phase 2 |
 | OD-10 | Is CSV import strictly all-or-nothing? | Decided | Product owner | Yes; correct invalid rows and preview again. | Phase 3 |
 | OD-11 | How should duplicate emails across batches be handled? | Decided | Requestor | Block by default and require an explicit correction or documented exception. | Phase 3 |

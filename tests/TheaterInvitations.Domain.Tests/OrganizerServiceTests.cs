@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
@@ -130,15 +132,102 @@ public sealed class OrganizerServiceTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, party.Email, null, 1));
     }
 
+    [Fact]
+    public async Task Elevated_operator_updates_support_email_and_records_sanitized_audit()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db, environmentName: Environments.Production);
+        var dashboard = await service.GetDashboardAsync();
+
+        await service.UpdateSupportEmailAsync("help@theater.org", dashboard.Configuration!.Version);
+
+        db.ChangeTracker.Clear();
+        Assert.Equal("help@theater.org", (await db.EventConfigurations.SingleAsync()).SupportEmail);
+        var audit = await db.AuditEvents.SingleAsync();
+        Assert.Equal("SupportEmailChanged", audit.EventType);
+        Assert.Equal("Accepted", audit.Outcome);
+        Assert.Equal("Development ElevatedOperator", audit.ActorIdentifier);
+        Assert.Null(audit.ReasonCategory);
+    }
+
+    [Fact]
+    public async Task Invalid_production_support_email_is_rejected_and_audited_without_address()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db, environmentName: Environments.Production);
+        var dashboard = await service.GetDashboardAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateSupportEmailAsync("not-an-email", dashboard.Configuration!.Version));
+
+        db.ChangeTracker.Clear();
+        Assert.Equal("rsvp@example.test", (await db.EventConfigurations.SingleAsync()).SupportEmail);
+        var audit = await db.AuditEvents.SingleAsync();
+        Assert.Equal("Rejected", audit.Outcome);
+        Assert.Equal("invalid-email", audit.ReasonCategory);
+        Assert.DoesNotContain("not-an-email", audit.CorrelationId);
+    }
+
+    [Fact]
+    public async Task Stale_support_email_update_is_rejected_and_current_value_is_preserved()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<StaleDataException>(() => service.UpdateSupportEmailAsync("help@theater.org", 42));
+
+        Assert.Equal("rsvp@example.test", (await db.EventConfigurations.AsNoTracking().SingleAsync()).SupportEmail);
+        Assert.Equal("stale", (await db.AuditEvents.SingleAsync()).ReasonCategory);
+    }
+
+    [Fact]
+    public async Task Support_email_update_requires_elevated_authorization()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db, new DeniedAuthorization());
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.UpdateSupportEmailAsync("help@theater.org", 0));
+    }
+
+    [Fact]
+    public async Task Elevated_operator_can_create_missing_event_configuration()
+    {
+        await using var db = CreateDb();
+        var service = CreateService(db);
+
+        await service.SaveEventConfigurationAsync(new EventConfigurationInput(340, "Theater Gala", new DateTime(2026, 10, 17, 18, 30, 0), new DateTime(2026, 10, 17, 19, 30, 0), "Main Theater", "1 Theater Street", "Smart casual", "Europe/Prague", "help@theater.org", 500), null);
+
+        var configuration = await db.EventConfigurations.SingleAsync();
+        Assert.Equal("Theater Gala", configuration.EventName);
+        Assert.Equal("help@theater.org", configuration.SupportEmail);
+        var audits = await db.AuditEvents.ToListAsync();
+        Assert.Contains(audits, x => x.EventType == "EventConfigurationSaved" && x.Outcome == "Accepted");
+        Assert.Contains(audits, x => x.EventType == "SupportEmailChanged" && x.Outcome == "Accepted");
+    }
+
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
-    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null) => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry());
+    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
-        db.EventConfigurations.Add(new EventConfiguration { Capacity = capacity, TimeZoneId = "Europe/Prague", SupportEmail = "rsvp@example.test", AccessibilityTextLimit = 500 });
+        db.EventConfigurations.Add(new EventConfiguration
+        {
+            Capacity = capacity,
+            EventName = "Theater Gala",
+            DoorsAtUtc = new DateTimeOffset(2026, 8, 1, 16, 0, 0, TimeSpan.Zero),
+            StartsAtUtc = new DateTimeOffset(2026, 8, 1, 17, 0, 0, TimeSpan.Zero),
+            VenueName = "Main Theater",
+            VenueAddress = "1 Theater Street",
+            TimeZoneId = "Europe/Prague",
+            SupportEmail = "rsvp@example.test",
+            AccessibilityTextLimit = 500
+        });
         await db.SaveChangesAsync();
     }
 
@@ -172,5 +261,13 @@ public sealed class OrganizerServiceTests
     private sealed class DeniedAuthorization : IOrganizerAuthorization
     {
         public Task<string> RequireAsync(string policy, CancellationToken cancellationToken = default) => throw new UnauthorizedAccessException();
+    }
+
+    private sealed class TestEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+        public string ApplicationName { get; set; } = "Tests";
+        public string ContentRootPath { get; set; } = string.Empty;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

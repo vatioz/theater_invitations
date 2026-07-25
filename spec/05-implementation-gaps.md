@@ -31,11 +31,11 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| R1 | Event details on RSVP page | High | Open | Configure and display date, doors/start time, venue, address, and optional dress code. |
-| R2 | Replace placeholder support contact | High before real invitations | Open | Replace `rsvp@example.test` with a monitored event support mailbox. |
-| R3 | Browser, mobile, and accessibility verification | High | Open | Manually verify mobile layout, keyboard navigation, focus order, labels, rapid double-submit, and refresh/back behavior. Automated browser tests are optional for a one-off event. |
-| R4 | Guard development seed data | Medium | Open | Test that the known development RSVP token cannot be seeded in staging or production. |
-| R5 | Public page-view audit events | Low | Open | Record sanitized valid, invalid, expired, locked, and current-response page views without tokens. |
+| R1 | Event details on RSVP page | High | In Progress | Persisted event details, organizer-managed configuration, and public presentation are implemented; production event values remain to be configured. |
+| R2 | Replace placeholder support contact | High before real invitations | In Progress | Role-gated editing, validation, concurrency protection, auditing, and public unavailable-state links are implemented; the approved mailbox remains to be configured. |
+| R3 | Browser, mobile, and accessibility verification | High | Deferred | Manual and automated browser and accessibility verification is documented in [06-public-rsvp-experience.md](06-public-rsvp-experience.md) but is not currently planned for implementation. |
+| R4 | Guard development seed data | Medium | In Progress | Composition and token-absence tests cover Development, Staging, and Production; the production deployment smoke query remains to be wired into deployment operations. |
+| R5 | Public page-view audit events | Low | Deferred | Sanitized public page-view auditing is documented in [06-public-rsvp-experience.md](06-public-rsvp-experience.md) but is not currently planned for implementation. |
 
 ## Auditing And Diagnostics
 
@@ -68,6 +68,6 @@ Treat batch management as a separate follow-up phase.
 
 ## Suggested One-Off Minimum
 
-Implement `S1`, `S4`, `A1`, `R1`, `R2`, `R3`, `O1`, `O3`, `B1`, and `B4`.
+Implement `S1`, `S4`, `A1`, `R1`, `R2`, `O1`, `O3`, `B1`, and `B4`.
 
 Implement `B2` and `B3` only when several invitation waves or deadline changes are expected. Lower-priority audit, grid, and workflow refinements can be deferred.

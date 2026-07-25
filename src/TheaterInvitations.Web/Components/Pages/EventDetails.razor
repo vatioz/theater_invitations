@@ -1,0 +1,26 @@
+@using TheaterInvitations.Web.Services
+
+<section class="event-details" aria-labelledby="event-details-heading">
+    <p class="eyebrow">Event details</p>
+    <h2 id="event-details-heading">@Invitation.EventName</h2>
+    <dl>
+        <div><dt>Date</dt><dd><time datetime="@LocalStart.ToString("yyyy-MM-dd")">@LocalStart.ToString("D")</time></dd></div>
+        <div><dt>Doors</dt><dd><time datetime="@Invitation.DoorsAtUtc.ToString("O")">@LocalDoors.ToString("t")</time></dd></div>
+        <div><dt>Starts</dt><dd><time datetime="@Invitation.StartsAtUtc.ToString("O")">@LocalStart.ToString("t")</time></dd></div>
+        <div><dt>Time zone</dt><dd>@Invitation.TimeZoneId</dd></div>
+        <div><dt>Venue</dt><dd>@Invitation.VenueName</dd></div>
+        <div><dt>Address</dt><dd class="event-address">@Invitation.VenueAddress</dd></div>
+        @if (!string.IsNullOrWhiteSpace(Invitation.DressCode))
+        {
+            <div><dt>Dress code</dt><dd>@Invitation.DressCode</dd></div>
+        }
+    </dl>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public RsvpInvitation Invitation { get; set; } = default!;
+
+    private TimeZoneInfo TimeZone => TimeZoneInfo.FindSystemTimeZoneById(Invitation.TimeZoneId);
+    private DateTimeOffset LocalDoors => TimeZoneInfo.ConvertTime(Invitation.DoorsAtUtc, TimeZone);
+    private DateTimeOffset LocalStart => TimeZoneInfo.ConvertTime(Invitation.StartsAtUtc, TimeZone);
+}

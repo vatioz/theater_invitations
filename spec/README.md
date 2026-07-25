@@ -73,6 +73,8 @@ These are implementation directions, not permission to hard-code provider assump
 2. [Functional requirements](02-functional-requirements.md)
 3. [Data, email, and integrations](03-data-email-and-integrations.md)
 4. [Open decisions](04-open-decisions.md)
+5. [Implementation gaps](05-implementation-gaps.md)
+6. [Public RSVP experience](06-public-rsvp-experience.md)
 
 ## Guiding Principles
 

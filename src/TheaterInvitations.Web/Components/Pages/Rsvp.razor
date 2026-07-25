@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @using TheaterInvitations.Domain
 @using TheaterInvitations.Web.Services
+@using Microsoft.EntityFrameworkCore
 @inject RsvpInvitationService InvitationService
 @inject RsvpService RsvpService
 
@@ -19,6 +20,10 @@
     {
         <UnavailableView Heading="RSVP responses are closed" Invitation="invitation" />
     }
+    else if (!invitation.IsConfigurationAvailable)
+    {
+        <UnavailableView Heading="RSVP is temporarily unavailable" Invitation="invitation" />
+    }
     else if (invitation.IsExpired)
     {
         <UnavailableView Heading="The RSVP deadline has passed" Invitation="invitation" />
@@ -30,6 +35,7 @@
             <h1 id="recorded-heading">Thank you, @invitation.PrimaryGuestName</h1>
             <p>@StatusMessage()</p>
             <p>This invitation covers @SeatDescription(invitation.AllocatedSeats).</p>
+            @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
             @if (!submitted)
             {
                 <button type="button" @onclick="BeginEditing">Update RSVP</button>
@@ -47,10 +53,15 @@
                 <p class="notice">Your response confirms or declines the complete party allocation.</p>
             }
             <p class="deadline">Please respond by <strong>@FormatDeadline(invitation)</strong>.</p>
+            @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
 
             @if (!string.IsNullOrEmpty(error))
             {
                 <p class="validation-message" role="alert">@error</p>
+                @if (showSupportContact)
+                {
+                    <SupportContact Invitation="invitation" />
+                }
             }
 
             <EditForm Model="model" OnValidSubmit="SubmitAsync" FormName="rsvp">
@@ -82,6 +93,7 @@
     private bool submitting;
     private bool submitted;
     private bool editing;
+    private bool showSupportContact;
     private string? error;
 
     protected override async Task OnParametersSetAsync()
@@ -110,6 +122,7 @@
     {
         submitting = true;
         error = null;
+        showSupportContact = false;
         try
         {
             var result = await RsvpService.SubmitAsync(Token, new RsvpSubmission(model.Response, model.AccessibilityRequirements, invitation?.Version), Guid.NewGuid().ToString("N"));
@@ -118,10 +131,11 @@
             {
                 error = result.Result switch
                 {
-                    RsvpResult.CapacityExceeded => "We could not record a confirmation because no seats are available. Please contact the organizer.",
+                    RsvpResult.CapacityExceeded => "We could not record a confirmation because no seats are available.",
                     RsvpResult.Stale => "This RSVP changed in another session. The latest response is shown; please review it before trying again.",
                     _ => "This RSVP is no longer available."
                 };
+                showSupportContact = result.Result == RsvpResult.CapacityExceeded;
                 return;
             }
 
@@ -135,6 +149,13 @@
         catch (TransactionConflictException exception)
         {
             error = exception.Message;
+            showSupportContact = true;
+            invitation = await InvitationService.GetAsync(Token);
+        }
+        catch (DbUpdateException)
+        {
+            error = "We could not save your response. It is safe to try again.";
+            showSupportContact = true;
             invitation = await InvitationService.GetAsync(Token);
         }
         finally
@@ -143,7 +164,12 @@
         }
     }
 
-    private static string SeatDescription(int seats) => seats == 1 ? "1 seat" : $"{seats} seats for you and your guest";
+    private static string SeatDescription(int seats) => seats switch
+    {
+        1 => "1 seat",
+        2 => "2 seats for you and your guest",
+        _ => $"{seats} seats for your party"
+    };
 
     private string StatusMessage() => model.Response == RsvpResponse.Confirm
         ? "Your party is confirmed."
@@ -152,7 +178,7 @@
     private static string FormatDeadline(RsvpInvitation invitation)
     {
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(invitation.TimeZoneId);
-        return TimeZoneInfo.ConvertTime(invitation.DeadlineUtc, timeZone).ToString("f") + $" ({timeZone.StandardName})";
+        return TimeZoneInfo.ConvertTime(invitation.DeadlineUtc, timeZone).ToString("f") + $" ({invitation.TimeZoneId})";
     }
 
     private sealed class RsvpModel
