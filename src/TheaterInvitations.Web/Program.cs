@@ -24,6 +24,8 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddDbContext<InvitationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+builder.Services.AddDbContextFactory<InvitationDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")), ServiceLifetime.Scoped);
 builder.Services.AddSingleton<IClock, TheaterInvitations.Web.Services.SystemClock>();
 builder.Services.AddScoped<RsvpService>();
 builder.Services.AddScoped<RsvpInvitationService>();

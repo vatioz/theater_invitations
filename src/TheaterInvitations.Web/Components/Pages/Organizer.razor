@@ -136,16 +136,16 @@
         }
 
         <section class="rsvp-card">
-            <h2>Recent audit history</h2>
-            <table>
-                <thead><tr><th>When</th><th>Event</th><th>Outcome</th><th>Actor</th></tr></thead>
-                <tbody>
-                    @foreach (var audit in dashboard.Audits)
-                    {
-                        <tr><td>@audit.OccurredAtUtc.LocalDateTime</td><td>@audit.EventType</td><td>@audit.Outcome</td><td>@audit.Actor</td></tr>
-                    }
-                </tbody>
-            </table>
+            <h2>Audit history</h2>
+            <div class="party-grid-wrap">
+                <QuickGrid TGridItem="OrganizerAudit" ItemsProvider="ProvideAudits" Pagination="auditPagination" Class="party-grid audit-grid">
+                    <PropertyColumn Property="audit => audit.OccurredAtUtc" Title="When (UTC)" Sortable="true" IsDefaultSortColumn="true" InitialSortDirection="SortDirection.Descending" />
+                    <PropertyColumn Property="audit => audit.EventType" Title="Event" Sortable="true" />
+                    <PropertyColumn Property="audit => audit.Outcome" Title="Outcome" Sortable="true" />
+                    <PropertyColumn Property="audit => audit.Actor" Title="Actor" Sortable="true" />
+                </QuickGrid>
+            </div>
+            <Paginator State="auditPagination" />
         </section>
     }
 </main>
@@ -155,6 +155,7 @@
     private ImportPreview? preview;
     private readonly PartyFilters filters = new();
     private readonly PaginationState pagination = new() { ItemsPerPage = 25 };
+    private readonly PaginationState auditPagination = new() { ItemsPerPage = 25 };
     private QuickGrid<OrganizerParty>? partyGrid;
     private OrganizerParty? selectedParty;
     private readonly CorrectionModel correction = new();
@@ -208,6 +209,9 @@
 
     private ValueTask<GridItemsProviderResult<OrganizerParty>> ProvideParties(GridItemsProviderRequest<OrganizerParty> request) =>
         OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status);
+
+    private ValueTask<GridItemsProviderResult<OrganizerAudit>> ProvideAudits(GridItemsProviderRequest<OrganizerAudit> request) =>
+        OrganizerService.GetAuditsAsync(request);
 
     private void SelectParty(OrganizerParty party)
     {

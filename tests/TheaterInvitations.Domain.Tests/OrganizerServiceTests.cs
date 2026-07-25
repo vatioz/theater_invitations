@@ -12,7 +12,7 @@ public sealed class OrganizerServiceTests
     {
         await using var db = CreateDb();
         await SeedConfigurationAsync(db, 10);
-        var service = new OrganizerService(db, new FixedClock());
+        var service = CreateService(db);
         const string csv = "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,\"Example, Inc.\",2";
 
         var preview = await service.PreviewImportAsync(csv);
@@ -36,7 +36,7 @@ public sealed class OrganizerServiceTests
         db.Add(batch);
         db.Add(new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Existing", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("existing") });
         await db.SaveChangesAsync();
-        var service = new OrganizerService(db, new FixedClock());
+        var service = CreateService(db);
 
         var preview = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nDuplicate,alex@example.test,,1");
 
@@ -49,7 +49,7 @@ public sealed class OrganizerServiceTests
     {
         await using var db = CreateDb();
         await SeedConfigurationAsync(db, 10);
-        var service = new OrganizerService(db, new FixedClock());
+        var service = CreateService(db);
 
         var preview = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,0");
 
@@ -61,7 +61,7 @@ public sealed class OrganizerServiceTests
     {
         await using var db = CreateDb();
         var party = await AddPartyAsync(db);
-        var service = new OrganizerService(db, new FixedClock());
+        var service = CreateService(db);
 
         await service.CorrectPartyAsync(party.Id, "Updated Guest", "updated@example.test", "Updated Co", 2, "Development Operator");
 
@@ -78,7 +78,7 @@ public sealed class OrganizerServiceTests
     {
         await using var db = CreateDb();
         var party = await AddPartyAsync(db);
-        var service = new OrganizerService(db, new FixedClock());
+        var service = CreateService(db);
 
         await Assert.ThrowsAsync<ArgumentException>(() => service.OverrideStatusAsync(party.Id, InvitationStatus.Confirmed, "", "Development ElevatedOperator"));
         await service.OverrideStatusAsync(party.Id, InvitationStatus.Confirmed, "Approved exception", "Development ElevatedOperator");
@@ -96,7 +96,7 @@ public sealed class OrganizerServiceTests
         await using var db = CreateDb();
         await AddPartyAsync(db, "Alex Guest", "alex@example.test");
         await AddPartyAsync(db, "Morgan Guest", "morgan@example.test");
-        var service = new OrganizerService(db, new FixedClock());
+        var service = CreateService(db);
 
         var result = await service.GetDashboardAsync(new PartyQuery(Search: "Morgan", PageSize: 1));
 
@@ -108,6 +108,8 @@ public sealed class OrganizerServiceTests
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
+
+    private static OrganizerService CreateService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new FixedClock());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
@@ -128,5 +130,11 @@ public sealed class OrganizerServiceTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => new(2026, 7, 25, 12, 0, 0, TimeSpan.Zero);
+    }
+
+    private sealed class TestDbContextFactory(InvitationDbContext db) : IDbContextFactory<InvitationDbContext>
+    {
+        public InvitationDbContext CreateDbContext() => db;
+        public Task<InvitationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(db);
     }
 }

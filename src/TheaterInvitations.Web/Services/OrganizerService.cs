@@ -7,12 +7,13 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class OrganizerService(InvitationDbContext db, IClock clock)
+public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock)
 {
     public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
     {
-        var query = from party in db.InvitationParties.AsNoTracking()
-                    join batch in db.InvitationBatches.AsNoTracking() on party.BatchId equals batch.Id
+        await using var gridDb = await dbFactory.CreateDbContextAsync(request.CancellationToken);
+        var query = from party in gridDb.InvitationParties.AsNoTracking()
+                    join batch in gridDb.InvitationBatches.AsNoTracking() on party.BatchId equals batch.Id
                     select new { party, batch };
         if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.party.PrimaryGuestName.Contains(search) || x.party.Email.Contains(search) || (x.party.Company != null && x.party.Company.Contains(search)));
         if (status is not null) query = query.Where(x => x.party.Status == status);
@@ -30,6 +31,24 @@ public sealed class OrganizerService(InvitationDbContext db, IClock clock)
         });
         var totalCount = await projected.CountAsync(request.CancellationToken);
         var sorted = request.SortByColumn is null ? projected.OrderBy(x => x.Name) : request.ApplySorting(projected);
+        var items = await sorted.Skip(request.StartIndex).Take(request.Count ?? 25).ToArrayAsync(request.CancellationToken);
+        return GridItemsProviderResult.From(items, totalCount);
+    }
+
+    public async ValueTask<GridItemsProviderResult<OrganizerAudit>> GetAuditsAsync(GridItemsProviderRequest<OrganizerAudit> request)
+    {
+        await using var gridDb = await dbFactory.CreateDbContextAsync(request.CancellationToken);
+        var projected = gridDb.AuditEvents.AsNoTracking().Select(x => new OrganizerAudit
+        {
+            OccurredAtUtc = x.OccurredAtUtc,
+            EventType = x.EventType,
+            Outcome = x.Outcome,
+            Actor = x.ActorIdentifier ?? x.ActorCategory
+        });
+        var totalCount = await projected.CountAsync(request.CancellationToken);
+        var sorted = request.SortByColumn is null
+            ? projected.OrderByDescending(x => x.OccurredAtUtc)
+            : request.ApplySorting(projected);
         var items = await sorted.Skip(request.StartIndex).Take(request.Count ?? 25).ToArrayAsync(request.CancellationToken);
         return GridItemsProviderResult.From(items, totalCount);
     }
@@ -55,7 +74,13 @@ public sealed class OrganizerService(InvitationDbContext db, IClock clock)
             BatchName = x.batch.Name
         }).ToListAsync(cancellationToken);
         var reserved = await ReservedSeatsAsync(now, cancellationToken);
-        var audits = await db.AuditEvents.OrderByDescending(x => x.OccurredAtUtc).Take(20).Select(x => new OrganizerAudit(x.OccurredAtUtc, x.EventType, x.Outcome, x.ActorIdentifier ?? x.ActorCategory)).ToListAsync(cancellationToken);
+        var audits = await db.AuditEvents.OrderByDescending(x => x.OccurredAtUtc).Take(20).Select(x => new OrganizerAudit
+        {
+            OccurredAtUtc = x.OccurredAtUtc,
+            EventType = x.EventType,
+            Outcome = x.Outcome,
+            Actor = x.ActorIdentifier ?? x.ActorCategory
+        }).ToListAsync(cancellationToken);
         var statusCounts = await db.InvitationParties.GroupBy(x => x.Status).Select(x => new { Status = x.Key, Seats = x.Sum(p => p.AllocatedSeats) }).ToListAsync(cancellationToken);
         return new OrganizerDashboard(configuration.IsRsvpLocked, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Confirmed)?.Seats ?? 0, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Pending)?.Seats ?? 0, configuration.Capacity - reserved, totalParties, parties, audits, query, (int)Math.Ceiling(totalParties / (double)query.PageSize));
     }
@@ -190,5 +215,11 @@ public sealed class OrganizerParty
     public InvitationStatus Status { get; init; }
     public string BatchName { get; init; } = string.Empty;
 }
-public sealed record OrganizerAudit(DateTimeOffset OccurredAtUtc, string EventType, string Outcome, string Actor);
+public sealed class OrganizerAudit
+{
+    public DateTimeOffset OccurredAtUtc { get; init; }
+    public string EventType { get; init; } = string.Empty;
+    public string Outcome { get; init; } = string.Empty;
+    public string Actor { get; init; } = string.Empty;
+}
 public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits, PartyQuery Query, int PageCount);
