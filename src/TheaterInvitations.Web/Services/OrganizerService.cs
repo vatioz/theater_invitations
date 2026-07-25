@@ -8,14 +8,21 @@ namespace TheaterInvitations.Web.Services;
 
 public sealed class OrganizerService(InvitationDbContext db, IClock clock)
 {
-    public async Task<OrganizerDashboard> GetDashboardAsync(CancellationToken cancellationToken = default)
+    public async Task<OrganizerDashboard> GetDashboardAsync(PartyQuery? query = null, CancellationToken cancellationToken = default)
     {
+        query ??= new PartyQuery();
         var now = clock.UtcNow;
         var configuration = await db.EventConfigurations.SingleAsync(cancellationToken);
-        var parties = await (from party in db.InvitationParties join batch in db.InvitationBatches on party.BatchId equals batch.Id select new OrganizerParty(party.PrimaryGuestName, party.Email, party.AllocatedSeats, party.Status, batch.Name)).ToListAsync(cancellationToken);
+        var partyQuery = from party in db.InvitationParties join batch in db.InvitationBatches on party.BatchId equals batch.Id select new { party, batch };
+        if (!string.IsNullOrWhiteSpace(query.Search)) partyQuery = partyQuery.Where(x => x.party.PrimaryGuestName.Contains(query.Search) || x.party.Email.Contains(query.Search) || (x.party.Company != null && x.party.Company.Contains(query.Search)));
+        if (query.Status is not null) partyQuery = partyQuery.Where(x => x.party.Status == query.Status);
+        if (query.BatchId is not null) partyQuery = partyQuery.Where(x => x.batch.Id == query.BatchId);
+        var totalParties = await partyQuery.CountAsync(cancellationToken);
+        var parties = await partyQuery.OrderBy(x => x.party.PrimaryGuestName).Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).Select(x => new OrganizerParty(x.party.Id, x.party.PrimaryGuestName, x.party.Email, x.party.Company, x.party.AllocatedSeats, x.party.Status, x.batch.Name)).ToListAsync(cancellationToken);
         var reserved = await ReservedSeatsAsync(now, cancellationToken);
         var audits = await db.AuditEvents.OrderByDescending(x => x.OccurredAtUtc).Take(20).Select(x => new OrganizerAudit(x.OccurredAtUtc, x.EventType, x.Outcome, x.ActorIdentifier ?? x.ActorCategory)).ToListAsync(cancellationToken);
-        return new OrganizerDashboard(configuration.IsRsvpLocked, parties.Where(x => x.Status == InvitationStatus.Confirmed).Sum(x => x.AllocatedSeats), parties.Where(x => x.Status == InvitationStatus.Pending).Sum(x => x.AllocatedSeats), configuration.Capacity - reserved, parties.Count, parties, audits);
+        var statusCounts = await db.InvitationParties.GroupBy(x => x.Status).Select(x => new { Status = x.Key, Seats = x.Sum(p => p.AllocatedSeats) }).ToListAsync(cancellationToken);
+        return new OrganizerDashboard(configuration.IsRsvpLocked, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Confirmed)?.Seats ?? 0, statusCounts.SingleOrDefault(x => x.Status == InvitationStatus.Pending)?.Seats ?? 0, configuration.Capacity - reserved, totalParties, parties, audits, query, (int)Math.Ceiling(totalParties / (double)query.PageSize));
     }
 
     public async Task<ImportPreview> PreviewImportAsync(string csv, CancellationToken cancellationToken = default)
@@ -81,8 +88,32 @@ public sealed class OrganizerService(InvitationDbContext db, IClock clock)
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task CorrectPartyAsync(Guid partyId, string name, string email, string? company, int seats, string actor, CancellationToken cancellationToken = default)
+    {
+        var party = await db.InvitationParties.SingleAsync(x => x.Id == partyId, cancellationToken);
+        var duplicateExists = await db.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == email.Trim().ToUpper(), cancellationToken);
+        if (duplicateExists) throw new InvalidOperationException("Email is already invited.");
+        if (seats > party.AllocatedSeats && await ReservedSeatsAsync(clock.UtcNow, cancellationToken) - party.AllocatedSeats + seats > (await db.EventConfigurations.SingleAsync(cancellationToken)).Capacity) throw new InvalidOperationException("The correction would exceed remaining capacity.");
+        party.CorrectDetails(name, email, company, seats);
+        await AuditAsync("PartyCorrected", "Accepted", null, partyId, actor, null, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task OverrideStatusAsync(Guid partyId, InvitationStatus status, string reason, string actor, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        var party = await db.InvitationParties.SingleAsync(x => x.Id == partyId, cancellationToken);
+        var becomingReserved = (status is InvitationStatus.Pending or InvitationStatus.Confirmed) && (party.Status is InvitationStatus.Declined or InvitationStatus.Expired);
+        if (becomingReserved && await ReservedSeatsAsync(clock.UtcNow, cancellationToken) + party.AllocatedSeats > (await db.EventConfigurations.SingleAsync(cancellationToken)).Capacity) throw new InvalidOperationException("The override would exceed remaining capacity.");
+        var previous = party.Status;
+        party.OverrideStatus(status, clock.UtcNow);
+        await AuditAsync("PartyStatusOverridden", "Accepted", null, partyId, actor, reason, cancellationToken, previous, status, party.Status);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task<int> ReservedSeatsAsync(DateTimeOffset now, CancellationToken cancellationToken) => await (from party in db.InvitationParties join batch in db.InvitationBatches on party.BatchId equals batch.Id where party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && batch.DeadlineUtc > now) select party.AllocatedSeats).SumAsync(cancellationToken);
-    private Task AuditAsync(string type, string outcome, Guid? batchId, Guid? partyId, CancellationToken cancellationToken) { db.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N") }); return Task.CompletedTask; }
+    private Task AuditAsync(string type, string outcome, Guid? batchId, Guid? partyId, CancellationToken cancellationToken) => AuditAsync(type, outcome, batchId, partyId, null, null, cancellationToken);
+    private Task AuditAsync(string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, CancellationToken cancellationToken, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) { db.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting }); return Task.CompletedTask; }
 
     private static List<string[]> ParseCsv(string text)
     {
@@ -113,6 +144,7 @@ public sealed class OrganizerService(InvitationDbContext db, IClock clock)
 
 public sealed record ImportRow(string Name, string Email, string? Company, int AllocatedSeats);
 public sealed record ImportPreview(IReadOnlyList<ImportRow> ValidRows, IReadOnlyList<string> Errors) { public int TotalSeats => ValidRows.Sum(x => x.AllocatedSeats); public bool IsValid => Errors.Count == 0; }
-public sealed record OrganizerParty(string Name, string Email, int AllocatedSeats, InvitationStatus Status, string BatchName);
+public sealed record PartyQuery(string? Search = null, InvitationStatus? Status = null, Guid? BatchId = null, int Page = 1, int PageSize = 25);
+public sealed record OrganizerParty(Guid Id, string Name, string Email, string? Company, int AllocatedSeats, InvitationStatus Status, string BatchName);
 public sealed record OrganizerAudit(DateTimeOffset OccurredAtUtc, string EventType, string Outcome, string Actor);
-public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits);
+public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits, PartyQuery Query, int PageCount);

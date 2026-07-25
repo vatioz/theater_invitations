@@ -2,6 +2,8 @@
 @attribute [Authorize(Policy = "OrganizerViewer")]
 @rendermode InteractiveServer
 @using TheaterInvitations.Web.Services
+@using TheaterInvitations.Domain
+@using System.ComponentModel.DataAnnotations
 @inject OrganizerService OrganizerService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
@@ -31,7 +33,17 @@
             <h2>Global RSVP lock</h2>
             <p>Guest RSVP is currently <strong>@(dashboard.IsRsvpLocked ? "locked" : "open")</strong>.</p>
             <AuthorizeView Roles="ElevatedOperator">
-                <Authorized><button @onclick="ToggleLockAsync">@(dashboard.IsRsvpLocked ? "Unlock RSVP" : "Lock RSVP")</button></Authorized>
+                <Authorized>
+                    @if (!confirmingLock)
+                    {
+                        <button @onclick="(() => confirmingLock = true)">@(dashboard.IsRsvpLocked ? "Unlock RSVP" : "Lock RSVP")</button>
+                    }
+                    else
+                    {
+                        <p class="notice">Confirm that you want to @(dashboard.IsRsvpLocked ? "unlock" : "lock") all guest RSVP changes.</p>
+                        <button @onclick="ToggleLockAsync">Confirm</button> <button @onclick="(() => confirmingLock = false)">Cancel</button>
+                    }
+                </Authorized>
             </AuthorizeView>
         </section>
 
@@ -60,16 +72,60 @@
 
         <section class="rsvp-card">
             <h2>Parties</h2>
+            <EditForm Model="filters" OnValidSubmit="ApplyFiltersAsync" FormName="party-filters">
+                <InputText @bind-Value="filters.Search" placeholder="Search name, email, or company" />
+                <InputSelect @bind-Value="filters.Status">
+                    <option value="">All statuses</option>
+                    @foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }
+                </InputSelect>
+                <button type="submit">Filter</button>
+            </EditForm>
             <table>
-                <thead><tr><th>Name</th><th>Email</th><th>Seats</th><th>Status</th><th>Batch</th></tr></thead>
+                <thead><tr><th>Name</th><th>Email</th><th>Seats</th><th>Status</th><th>Batch</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var party in dashboard.Parties)
                     {
-                        <tr><td>@party.Name</td><td>@party.Email</td><td>@party.AllocatedSeats</td><td>@party.Status</td><td>@party.BatchName</td></tr>
+                        <tr><td>@party.Name</td><td>@party.Email</td><td>@party.AllocatedSeats</td><td>@party.Status</td><td>@party.BatchName</td><td><AuthorizeView Roles="Operator,ElevatedOperator"><Authorized><button @onclick="(() => SelectParty(party))">Manage</button></Authorized></AuthorizeView></td></tr>
                     }
                 </tbody>
             </table>
+            @if (dashboard.PageCount > 1)
+            {
+                <p>Page @filters.Page of @dashboard.PageCount. <button disabled="@(filters.Page <= 1)" @onclick="PreviousPageAsync">Previous</button> <button disabled="@(filters.Page >= dashboard.PageCount)" @onclick="NextPageAsync">Next</button></p>
+            }
         </section>
+
+        @if (selectedParty is not null)
+        {
+            <section class="rsvp-card">
+                <h2>Manage @selectedParty.Name</h2>
+                @if (!string.IsNullOrWhiteSpace(actionError)) { <p class="validation-message">@actionError</p> }
+                <AuthorizeView Roles="Operator,ElevatedOperator" Context="operatorAuth">
+                    <Authorized>
+                        <EditForm Model="correction" OnValidSubmit="CorrectAsync" FormName="party-correction">
+                            <h3>Correct details</h3>
+                            <DataAnnotationsValidator />
+                            <ValidationSummary />
+                            <label>Name <InputText @bind-Value="correction.Name" /> <ValidationMessage For="@(() => correction.Name)" /></label>
+                            <label>Email <InputText @bind-Value="correction.Email" /> <ValidationMessage For="@(() => correction.Email)" /></label>
+                            <label>Company <InputText @bind-Value="correction.Company" /></label>
+                            <label>Allocated seats <InputNumber @bind-Value="correction.Seats" /> <ValidationMessage For="@(() => correction.Seats)" /></label>
+                            <button type="submit">Save correction</button> <button type="button" @onclick="CloseManage">Cancel</button>
+                        </EditForm>
+                    </Authorized>
+                </AuthorizeView>
+                <AuthorizeView Roles="ElevatedOperator" Context="elevatedAuth">
+                    <Authorized>
+                        <EditForm Model="overrideModel" OnValidSubmit="OverrideAsync" FormName="party-override">
+                            <h3>Override status</h3>
+                            <label>Status <InputSelect @bind-Value="overrideModel.Status">@foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }</InputSelect></label>
+                            <label>Reason <InputText @bind-Value="overrideModel.Reason" /></label>
+                            <button type="submit">Apply override</button> <button type="button" @onclick="CloseManage">Cancel</button>
+                        </EditForm>
+                    </Authorized>
+                </AuthorizeView>
+            </section>
+        }
 
         <section class="rsvp-card">
             <h2>Recent audit history</h2>
@@ -89,8 +145,14 @@
 @code {
     private OrganizerDashboard? dashboard;
     private ImportPreview? preview;
+    private readonly PartyFilters filters = new();
+    private OrganizerParty? selectedParty;
+    private readonly CorrectionModel correction = new();
+    private readonly OverrideModel overrideModel = new();
+    private bool confirmingLock;
+    private string? actionError;
 
-    protected override async Task OnInitializedAsync() => dashboard = await OrganizerService.GetDashboardAsync();
+    protected override async Task OnInitializedAsync() => await RefreshDashboardAsync();
 
     private async Task PreviewAsync(InputFileChangeEventArgs args)
     {
@@ -117,8 +179,45 @@
         if (dashboard is not null)
         {
             await OrganizerService.SetGlobalLockAsync(!dashboard.IsRsvpLocked);
-            dashboard = await OrganizerService.GetDashboardAsync();
+            confirmingLock = false;
+            await RefreshDashboardAsync();
         }
+    }
+
+    private async Task ApplyFiltersAsync() { filters.Page = 1; await RefreshDashboardAsync(); }
+    private async Task PreviousPageAsync() { filters.Page--; await RefreshDashboardAsync(); }
+    private async Task NextPageAsync() { filters.Page++; await RefreshDashboardAsync(); }
+    private async Task RefreshDashboardAsync() => dashboard = await OrganizerService.GetDashboardAsync(new PartyQuery(filters.Search, filters.Status, null, filters.Page));
+
+    private void SelectParty(OrganizerParty party)
+    {
+        selectedParty = party;
+        correction.Name = party.Name; correction.Email = party.Email; correction.Company = party.Company; correction.Seats = party.AllocatedSeats;
+        overrideModel.Status = party.Status; overrideModel.Reason = string.Empty; actionError = null;
+    }
+
+    private async Task CorrectAsync()
+    {
+        await RequireRoleAsync("Operator", "ElevatedOperator");
+        try { await OrganizerService.CorrectPartyAsync(selectedParty!.Id, correction.Name, correction.Email, correction.Company, correction.Seats, await ActorAsync()); CloseManage(); await RefreshDashboardAsync(); }
+        catch (ArgumentException exception) { actionError = exception.Message; }
+        catch (InvalidOperationException exception) { actionError = exception.Message; }
+    }
+
+    private async Task OverrideAsync()
+    {
+        await RequireRoleAsync("ElevatedOperator");
+        try { await OrganizerService.OverrideStatusAsync(selectedParty!.Id, overrideModel.Status, overrideModel.Reason, await ActorAsync()); CloseManage(); await RefreshDashboardAsync(); }
+        catch (ArgumentException exception) { actionError = exception.Message; }
+        catch (InvalidOperationException exception) { actionError = exception.Message; }
+    }
+
+    private async Task<string> ActorAsync() => (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User.Identity?.Name ?? "Organizer";
+
+    private void CloseManage()
+    {
+        selectedParty = null;
+        actionError = null;
     }
 
     private async Task RequireRoleAsync(params string[] roles)
@@ -129,4 +228,14 @@
             throw new UnauthorizedAccessException();
         }
     }
+
+    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } public int Page { get; set; } = 1; }
+    private sealed class CorrectionModel
+    {
+        [Required] public string Name { get; set; } = string.Empty;
+        [Required, EmailAddress] public string Email { get; set; } = string.Empty;
+        public string? Company { get; set; }
+        [Range(1, int.MaxValue)] public int Seats { get; set; }
+    }
+    private sealed class OverrideModel { public InvitationStatus Status { get; set; } public string Reason { get; set; } = string.Empty; }
 }

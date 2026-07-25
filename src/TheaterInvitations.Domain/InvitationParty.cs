@@ -4,10 +4,10 @@ public sealed class InvitationParty
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid BatchId { get; init; }
-    public string PrimaryGuestName { get; init; } = string.Empty;
-    public string Email { get; init; } = string.Empty;
-    public string? Company { get; init; }
-    public int AllocatedSeats { get; init; }
+    public string PrimaryGuestName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string? Company { get; set; }
+    public int AllocatedSeats { get; set; }
     public string TokenHash { get; init; } = string.Empty;
     public InvitationStatus Status { get; private set; } = InvitationStatus.Pending;
     public string? AccessibilityRequirements { get; private set; }
@@ -48,5 +48,23 @@ public sealed class InvitationParty
         AccessibilityRequirements = response == RsvpResponse.Confirm ? accessibilityRequirements?.Trim() : null;
         RespondedAtUtc = nowUtc;
         return RsvpResult.Applied;
+    }
+
+    public void CorrectDetails(string primaryGuestName, string email, string? company, int allocatedSeats)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(primaryGuestName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(allocatedSeats);
+        PrimaryGuestName = primaryGuestName.Trim();
+        Email = email.Trim();
+        Company = string.IsNullOrWhiteSpace(company) ? null : company.Trim();
+        AllocatedSeats = allocatedSeats;
+    }
+
+    public void OverrideStatus(InvitationStatus status, DateTimeOffset nowUtc)
+    {
+        Status = status;
+        AccessibilityRequirements = status == InvitationStatus.Confirmed ? AccessibilityRequirements : null;
+        RespondedAtUtc = nowUtc;
     }
 }
