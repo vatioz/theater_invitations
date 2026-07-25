@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Data;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Components.QuickGrid;
@@ -7,7 +8,7 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock)
+public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry)
 {
     public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
     {
@@ -27,7 +28,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             Company = x.party.Company,
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
-            BatchName = x.batch.Name
+            BatchName = x.batch.Name,
+            Version = x.party.Version
         });
         var totalCount = await projected.CountAsync(request.CancellationToken);
         var sorted = request.SortByColumn is null ? projected.OrderBy(x => x.Name) : request.ApplySorting(projected);
@@ -71,7 +73,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             Company = x.party.Company,
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
-            BatchName = x.batch.Name
+            BatchName = x.batch.Name,
+            Version = x.party.Version
         }).ToListAsync(cancellationToken);
         var reserved = await ReservedSeatsAsync(now, cancellationToken);
         var audits = await db.AuditEvents.OrderByDescending(x => x.OccurredAtUtc).Take(20).Select(x => new OrganizerAudit
@@ -124,56 +127,78 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
 
     public async Task CommitImportAsync(ImportPreview preview, string batchName, CancellationToken cancellationToken = default)
     {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         if (!preview.IsValid) throw new InvalidOperationException("Only a valid preview may be committed.");
-        await using var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
-        var configuration = await db.EventConfigurations.SingleAsync(cancellationToken);
-        if (await ReservedSeatsAsync(clock.UtcNow, cancellationToken) + preview.TotalSeats > configuration.Capacity)
+        await retry.ExecuteAsync(async token =>
         {
-            throw new InvalidOperationException("The import would exceed remaining capacity.");
-        }
-        var batch = new InvitationBatch { Name = batchName, DeadlineUtc = clock.UtcNow.AddDays(14), CreatedAtUtc = clock.UtcNow };
-        db.InvitationBatches.Add(batch);
-        foreach (var row in preview.ValidRows) db.InvitationParties.Add(new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, TokenHash = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)) });
-        await AuditAsync("BatchImported", "Accepted", batch.Id, null, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
-        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
+            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
+            var configuration = await operationDb.EventConfigurations.SingleAsync(token);
+            if (await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + preview.TotalSeats > configuration.Capacity) throw new InvalidOperationException("The import would exceed remaining capacity.");
+            var batch = new InvitationBatch { Name = batchName, DeadlineUtc = clock.UtcNow.AddDays(14), CreatedAtUtc = clock.UtcNow };
+            operationDb.InvitationBatches.Add(batch);
+            foreach (var row in preview.ValidRows) operationDb.InvitationParties.Add(new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, TokenHash = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)) });
+            AddAudit(operationDb, "BatchImported", "Accepted", batch.Id, null, actor, null);
+            await operationDb.SaveChangesAsync(token);
+            if (transaction is not null) await transaction.CommitAsync(token);
+            return true;
+        }, cancellationToken);
     }
 
     public async Task SetGlobalLockAsync(bool isLocked, CancellationToken cancellationToken = default)
     {
-        var configuration = await db.EventConfigurations.SingleAsync(cancellationToken);
+        var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
+        await using var operationDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var configuration = await operationDb.EventConfigurations.SingleAsync(cancellationToken);
         configuration.IsRsvpLocked = isLocked;
         configuration.LockedAtUtc = isLocked ? clock.UtcNow : null;
-        await AuditAsync(isLocked ? "RsvpLocked" : "RsvpUnlocked", "Accepted", null, null, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        AddAudit(operationDb, isLocked ? "RsvpLocked" : "RsvpUnlocked", "Accepted", null, null, actor, null);
+        await operationDb.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task CorrectPartyAsync(Guid partyId, string name, string email, string? company, int seats, string actor, CancellationToken cancellationToken = default)
+    public async Task CorrectPartyAsync(Guid partyId, uint expectedVersion, string name, string email, string? company, int seats, CancellationToken cancellationToken = default)
     {
-        var party = await db.InvitationParties.SingleAsync(x => x.Id == partyId, cancellationToken);
-        var duplicateExists = await db.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == email.Trim().ToUpper(), cancellationToken);
-        if (duplicateExists) throw new InvalidOperationException("Email is already invited.");
-        if (seats > party.AllocatedSeats && await ReservedSeatsAsync(clock.UtcNow, cancellationToken) - party.AllocatedSeats + seats > (await db.EventConfigurations.SingleAsync(cancellationToken)).Capacity) throw new InvalidOperationException("The correction would exceed remaining capacity.");
-        party.CorrectDetails(name, email, company, seats);
-        await AuditAsync("PartyCorrected", "Accepted", null, partyId, actor, null, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        await retry.ExecuteAsync(async token =>
+        {
+            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
+            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
+            var party = await operationDb.InvitationParties.SingleAsync(x => x.Id == partyId, token);
+            if (party.Version != expectedVersion) throw new StaleDataException("This party changed after you opened it. The latest values have been loaded.");
+            if (await operationDb.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == email.Trim().ToUpper(), token)) throw new InvalidOperationException("Email is already invited.");
+            if (seats > party.AllocatedSeats && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) - party.AllocatedSeats + seats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) throw new InvalidOperationException("The correction would exceed remaining capacity.");
+            party.CorrectDetails(name, email, company, seats);
+            AddAudit(operationDb, "PartyCorrected", "Accepted", null, partyId, actor, null);
+            await operationDb.SaveChangesAsync(token);
+            if (transaction is not null) await transaction.CommitAsync(token);
+            return true;
+        }, cancellationToken);
     }
 
-    public async Task OverrideStatusAsync(Guid partyId, InvitationStatus status, string reason, string actor, CancellationToken cancellationToken = default)
+    public async Task OverrideStatusAsync(Guid partyId, uint expectedVersion, InvitationStatus status, string reason, CancellationToken cancellationToken = default)
     {
+        var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-        var party = await db.InvitationParties.SingleAsync(x => x.Id == partyId, cancellationToken);
-        var becomingReserved = (status is InvitationStatus.Pending or InvitationStatus.Confirmed) && (party.Status is InvitationStatus.Declined or InvitationStatus.Expired);
-        if (becomingReserved && await ReservedSeatsAsync(clock.UtcNow, cancellationToken) + party.AllocatedSeats > (await db.EventConfigurations.SingleAsync(cancellationToken)).Capacity) throw new InvalidOperationException("The override would exceed remaining capacity.");
-        var previous = party.Status;
-        party.OverrideStatus(status, clock.UtcNow);
-        await AuditAsync("PartyStatusOverridden", "Accepted", null, partyId, actor, reason, cancellationToken, previous, status, party.Status);
-        await db.SaveChangesAsync(cancellationToken);
+        await retry.ExecuteAsync(async token =>
+        {
+            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
+            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
+            var party = await operationDb.InvitationParties.SingleAsync(x => x.Id == partyId, token);
+            if (party.Version != expectedVersion) throw new StaleDataException("This party changed after you opened it. The latest values have been loaded.");
+            var becomingReserved = (status is InvitationStatus.Pending or InvitationStatus.Confirmed) && (party.Status is InvitationStatus.Declined or InvitationStatus.Expired);
+            if (becomingReserved && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + party.AllocatedSeats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) throw new InvalidOperationException("The override would exceed remaining capacity.");
+            var previous = party.Status;
+            party.OverrideStatus(status, clock.UtcNow);
+            AddAudit(operationDb, "PartyStatusOverridden", "Accepted", null, partyId, actor, reason, previous, status, party.Status);
+            await operationDb.SaveChangesAsync(token);
+            if (transaction is not null) await transaction.CommitAsync(token);
+            return true;
+        }, cancellationToken);
     }
 
     private async Task<int> ReservedSeatsAsync(DateTimeOffset now, CancellationToken cancellationToken) => await (from party in db.InvitationParties join batch in db.InvitationBatches on party.BatchId equals batch.Id where party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && batch.DeadlineUtc > now) select party.AllocatedSeats).SumAsync(cancellationToken);
-    private Task AuditAsync(string type, string outcome, Guid? batchId, Guid? partyId, CancellationToken cancellationToken) => AuditAsync(type, outcome, batchId, partyId, null, null, cancellationToken);
-    private Task AuditAsync(string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, CancellationToken cancellationToken, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) { db.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting }); return Task.CompletedTask; }
+    private static async Task<int> ReservedSeatsAsync(InvitationDbContext operationDb, DateTimeOffset now, CancellationToken cancellationToken) => await (from party in operationDb.InvitationParties join batch in operationDb.InvitationBatches on party.BatchId equals batch.Id where party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && batch.DeadlineUtc > now) select party.AllocatedSeats).SumAsync(cancellationToken);
+    private void AddAudit(InvitationDbContext operationDb, string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) => operationDb.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting });
 
     private static List<string[]> ParseCsv(string text)
     {
@@ -214,6 +239,7 @@ public sealed class OrganizerParty
     public int AllocatedSeats { get; init; }
     public InvitationStatus Status { get; init; }
     public string BatchName { get; init; } = string.Empty;
+    public uint Version { get; init; }
 }
 public sealed class OrganizerAudit
 {

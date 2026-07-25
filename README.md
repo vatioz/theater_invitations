@@ -11,6 +11,8 @@ dotnet test TheaterInvitations.sln --no-build
 dotnet run --project src/TheaterInvitations.Web
 ```
 
+The solution test command includes PostgreSQL concurrency tests that start an isolated container. Docker Desktop must be running.
+
 Set `ConnectionStrings__Postgres` in user secrets or environment variables before applying migrations. `.env.example` shows the expected local value; it is not loaded automatically.
 
 ```powershell

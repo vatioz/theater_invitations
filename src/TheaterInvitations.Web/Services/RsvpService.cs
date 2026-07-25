@@ -7,21 +7,30 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class RsvpService(InvitationDbContext db, IClock clock)
+public sealed class RsvpService(IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, ITransactionRetry retry)
 {
     public async Task<RsvpSubmissionResult> SubmitAsync(string token, RsvpSubmission submission, string correlationId, CancellationToken cancellationToken = default)
     {
+        return await retry.ExecuteAsync(async tokenCancellation =>
+        {
+            await using var operationDb = await dbFactory.CreateDbContextAsync(tokenCancellation);
+            return await SubmitOnceAsync(operationDb, token, submission, correlationId, tokenCancellation);
+        }, cancellationToken);
+    }
+
+    private async Task<RsvpSubmissionResult> SubmitOnceAsync(InvitationDbContext operationDb, string token, RsvpSubmission submission, string correlationId, CancellationToken cancellationToken)
+    {
         var tokenHash = HashToken(token);
         var nowUtc = clock.UtcNow;
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+        await using var transaction = operationDb.Database.IsRelational()
+            ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
             : null;
 
-        var party = await db.InvitationParties.SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
+        var party = await operationDb.InvitationParties.SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
         if (party is null)
         {
-            await WriteAuditAsync("RsvpSubmitted", "Rejected", null, null, correlationId, "invalid-token", null, RequestedStatus(submission.Response), null, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
+            AddAudit(operationDb, "RsvpSubmitted", "Rejected", null, null, correlationId, "invalid-token", null, RequestedStatus(submission.Response), null);
+            await operationDb.SaveChangesAsync(cancellationToken);
             if (transaction is not null)
             {
                 await transaction.CommitAsync(cancellationToken);
@@ -30,13 +39,21 @@ public sealed class RsvpService(InvitationDbContext db, IClock clock)
             return new RsvpSubmissionResult(RsvpResult.Expired) { IsValidToken = false };
         }
 
-        var batch = await db.InvitationBatches.SingleAsync(x => x.Id == party.BatchId, cancellationToken);
-        var configuration = await db.EventConfigurations.SingleAsync(cancellationToken);
+        var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == party.BatchId, cancellationToken);
+        var configuration = await operationDb.EventConfigurations.SingleAsync(cancellationToken);
+
+        if (submission.ExpectedVersion is not null && submission.ExpectedVersion != party.Version)
+        {
+            AddAudit(operationDb, "RsvpSubmitted", "Rejected", party.Id, batch.Id, correlationId, "stale", party.Status, RequestedStatus(submission.Response), party.Status);
+            await operationDb.SaveChangesAsync(cancellationToken);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+            return new RsvpSubmissionResult(RsvpResult.Stale);
+        }
 
         if (submission.Response == RsvpResponse.Confirm && submission.AccessibilityRequirements?.Length > configuration.AccessibilityTextLimit)
         {
-            await WriteAuditAsync("RsvpSubmitted", "Rejected", party.Id, batch.Id, correlationId, "accessibility-limit-exceeded", party.Status, RequestedStatus(submission.Response), party.Status, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
+            AddAudit(operationDb, "RsvpSubmitted", "Rejected", party.Id, batch.Id, correlationId, "accessibility-limit-exceeded", party.Status, RequestedStatus(submission.Response), party.Status);
+            await operationDb.SaveChangesAsync(cancellationToken);
             if (transaction is not null)
             {
                 await transaction.CommitAsync(cancellationToken);
@@ -47,11 +64,11 @@ public sealed class RsvpService(InvitationDbContext db, IClock clock)
 
         if (submission.Response == RsvpResponse.Confirm && !party.IsEffectivelyExpired(batch.DeadlineUtc, nowUtc) && !configuration.IsRsvpLocked)
         {
-            var reservedByOtherParties = await ReservedSeatsExceptAsync(party.Id, nowUtc, cancellationToken);
+            var reservedByOtherParties = await ReservedSeatsExceptAsync(operationDb, party.Id, nowUtc, cancellationToken);
             if (reservedByOtherParties + party.AllocatedSeats > configuration.Capacity)
             {
-                await WriteAuditAsync("RsvpSubmitted", "Rejected", party.Id, batch.Id, correlationId, "capacity-exceeded", party.Status, RequestedStatus(submission.Response), party.Status, cancellationToken);
-                await db.SaveChangesAsync(cancellationToken);
+                AddAudit(operationDb, "RsvpSubmitted", "Rejected", party.Id, batch.Id, correlationId, "capacity-exceeded", party.Status, RequestedStatus(submission.Response), party.Status);
+                await operationDb.SaveChangesAsync(cancellationToken);
                 if (transaction is not null)
                 {
                     await transaction.CommitAsync(cancellationToken);
@@ -70,8 +87,8 @@ public sealed class RsvpService(InvitationDbContext db, IClock clock)
             RsvpResult.Expired => "expired",
             _ => null
         };
-        await WriteAuditAsync("RsvpSubmitted", outcome, party.Id, batch.Id, correlationId, reason, previousStatus, RequestedStatus(submission.Response), party.Status, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+        AddAudit(operationDb, "RsvpSubmitted", outcome, party.Id, batch.Id, correlationId, reason, previousStatus, RequestedStatus(submission.Response), party.Status);
+        await operationDb.SaveChangesAsync(cancellationToken);
         if (transaction is not null)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -86,11 +103,11 @@ public sealed class RsvpService(InvitationDbContext db, IClock clock)
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
     }
 
-    private async Task<int> ReservedSeatsExceptAsync(Guid partyId, DateTimeOffset nowUtc, CancellationToken cancellationToken)
+    private static async Task<int> ReservedSeatsExceptAsync(InvitationDbContext operationDb, Guid partyId, DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
         return await (
-            from party in db.InvitationParties
-            join batch in db.InvitationBatches on party.BatchId equals batch.Id
+            from party in operationDb.InvitationParties
+            join batch in operationDb.InvitationBatches on party.BatchId equals batch.Id
             where party.Id != partyId && (party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && batch.DeadlineUtc > nowUtc))
             select party.AllocatedSeats).SumAsync(cancellationToken);
     }
@@ -98,9 +115,9 @@ public sealed class RsvpService(InvitationDbContext db, IClock clock)
     private static InvitationStatus RequestedStatus(RsvpResponse response) =>
         response == RsvpResponse.Confirm ? InvitationStatus.Confirmed : InvitationStatus.Declined;
 
-    private Task WriteAuditAsync(string eventType, string outcome, Guid? partyId, Guid? batchId, string correlationId, string? reason, InvitationStatus? previousStatus, InvitationStatus? requestedStatus, InvitationStatus? resultingStatus, CancellationToken cancellationToken)
+    private void AddAudit(InvitationDbContext operationDb, string eventType, string outcome, Guid? partyId, Guid? batchId, string correlationId, string? reason, InvitationStatus? previousStatus, InvitationStatus? requestedStatus, InvitationStatus? resultingStatus)
     {
-        db.AuditEvents.Add(new AuditEvent
+        operationDb.AuditEvents.Add(new AuditEvent
         {
             OccurredAtUtc = clock.UtcNow,
             EventType = eventType,
@@ -114,6 +131,5 @@ public sealed class RsvpService(InvitationDbContext db, IClock clock)
             RequestedStatus = requestedStatus,
             ResultingStatus = resultingStatus
         });
-        return Task.CompletedTask;
     }
 }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
@@ -14,11 +15,13 @@ public sealed class RsvpServiceTests
     {
         await using var db = CreateDb();
         var party = await SeedAsync(db, capacity: 2, deadlineUtc: Now.AddHours(1));
-        var service = new RsvpService(db, new FixedClock(Now));
+        var service = CreateService(db);
 
         var result = await service.SubmitAsync("valid-token", new RsvpSubmission(RsvpResponse.Confirm, "Wheelchair space"), "request-1");
 
         Assert.Equal(RsvpResult.Applied, result.Result);
+        db.ChangeTracker.Clear();
+        party = await db.InvitationParties.SingleAsync(x => x.Id == party.Id);
         Assert.Equal(InvitationStatus.Confirmed, party.Status);
         var audit = await db.AuditEvents.SingleAsync();
         Assert.Equal("Accepted", audit.Outcome);
@@ -32,7 +35,7 @@ public sealed class RsvpServiceTests
     public async Task Invalid_token_writes_a_sanitized_audit_event()
     {
         await using var db = CreateDb();
-        var service = new RsvpService(db, new FixedClock(Now));
+        var service = CreateService(db);
 
         var result = await service.SubmitAsync("unknown-token", new RsvpSubmission(RsvpResponse.Confirm, null), "request-2");
 
@@ -48,7 +51,7 @@ public sealed class RsvpServiceTests
     {
         await using var db = CreateDb();
         var party = await SeedAsync(db, capacity: 2, deadlineUtc: Now.AddHours(1), isLocked: true);
-        var service = new RsvpService(db, new FixedClock(Now));
+        var service = CreateService(db);
 
         var result = await service.SubmitAsync("valid-token", new RsvpSubmission(RsvpResponse.Confirm, null), "request-3");
 
@@ -71,7 +74,7 @@ public sealed class RsvpServiceTests
             TokenHash = RsvpService.HashToken("other-token")
         });
         await db.SaveChangesAsync();
-        var service = new RsvpService(db, new FixedClock(Now));
+        var service = CreateService(db);
 
         var result = await service.SubmitAsync("valid-token", new RsvpSubmission(RsvpResponse.Confirm, null), "request-4");
 
@@ -85,7 +88,7 @@ public sealed class RsvpServiceTests
     {
         await using var db = CreateDb();
         await SeedAsync(db, capacity: 2, deadlineUtc: Now.AddHours(1), accessibilityTextLimit: 3);
-        var service = new RsvpService(db, new FixedClock(Now));
+        var service = CreateService(db);
 
         await Assert.ThrowsAsync<ArgumentException>(() => service.SubmitAsync("valid-token", new RsvpSubmission(RsvpResponse.Confirm, "long"), "request-5"));
         Assert.Equal("accessibility-limit-exceeded", (await db.AuditEvents.SingleAsync()).ReasonCategory);
@@ -98,6 +101,8 @@ public sealed class RsvpServiceTests
             .Options;
         return new InvitationDbContext(options);
     }
+
+    private static RsvpService CreateService(InvitationDbContext db) => new(new TestDbContextFactory(db), new FixedClock(Now), new TransactionRetry());
 
     private static async Task<InvitationParty> SeedAsync(InvitationDbContext db, int capacity, DateTimeOffset deadlineUtc, bool isLocked = false, int seats = 1, int accessibilityTextLimit = 500)
     {
@@ -120,5 +125,12 @@ public sealed class RsvpServiceTests
     private sealed class FixedClock(DateTimeOffset nowUtc) : IClock
     {
         public DateTimeOffset UtcNow => nowUtc;
+    }
+
+    private sealed class TestDbContextFactory(InvitationDbContext db) : IDbContextFactory<InvitationDbContext>
+    {
+        private readonly DbContextOptions<InvitationDbContext> options = (DbContextOptions<InvitationDbContext>)db.GetService<IDbContextOptions>();
+        public InvitationDbContext CreateDbContext() => new(options);
+        public Task<InvitationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
     }
 }

@@ -30,6 +30,8 @@ builder.Services.AddSingleton<IClock, TheaterInvitations.Web.Services.SystemCloc
 builder.Services.AddScoped<RsvpService>();
 builder.Services.AddScoped<RsvpInvitationService>();
 builder.Services.AddScoped<OrganizerService>();
+builder.Services.AddScoped<IOrganizerAuthorization, OrganizerAuthorization>();
+builder.Services.AddSingleton<ITransactionRetry, TransactionRetry>();
 
 var app = builder.Build();
 

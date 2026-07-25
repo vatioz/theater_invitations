@@ -112,11 +112,16 @@
         error = null;
         try
         {
-            var result = await RsvpService.SubmitAsync(Token, new RsvpSubmission(model.Response, model.AccessibilityRequirements), Guid.NewGuid().ToString("N"));
+            var result = await RsvpService.SubmitAsync(Token, new RsvpSubmission(model.Response, model.AccessibilityRequirements, invitation?.Version), Guid.NewGuid().ToString("N"));
             invitation = await InvitationService.GetAsync(Token);
-            if (!result.IsValidToken || result.Result is RsvpResult.Locked or RsvpResult.Expired or RsvpResult.CapacityExceeded)
+            if (!result.IsValidToken || result.Result is RsvpResult.Locked or RsvpResult.Expired or RsvpResult.CapacityExceeded or RsvpResult.Stale)
             {
-                error = result.Result == RsvpResult.CapacityExceeded ? "We could not record a confirmation because no seats are available. Please contact the organizer." : "This RSVP is no longer available.";
+                error = result.Result switch
+                {
+                    RsvpResult.CapacityExceeded => "We could not record a confirmation because no seats are available. Please contact the organizer.",
+                    RsvpResult.Stale => "This RSVP changed in another session. The latest response is shown; please review it before trying again.",
+                    _ => "This RSVP is no longer available."
+                };
                 return;
             }
 
@@ -126,6 +131,11 @@
         catch (ArgumentException)
         {
             error = "Please shorten the accessibility requirements and try again.";
+        }
+        catch (TransactionConflictException exception)
+        {
+            error = exception.Message;
+            invitation = await InvitationService.GetAsync(Token);
         }
         finally
         {
