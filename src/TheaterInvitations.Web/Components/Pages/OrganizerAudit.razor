@@ -1,0 +1,18 @@
+@page "/organizer/audit"
+@attribute [Authorize(Policy = "OrganizerViewer")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using TheaterInvitations.Web.Services
+@using OrganizerAuditRow = TheaterInvitations.Web.Services.OrganizerAudit
+@inject OrganizerService OrganizerService
+
+<PageTitle>Audit history</PageTitle>
+<main class="organizer-page">
+    <header><p class="eyebrow">Organizer</p><h1>Audit history</h1><OrganizerNavigation /></header>
+    <section class="rsvp-card audit-page-card">
+        <p>Review recorded organizer and invitee actions. Sensitive RSVP tokens and accessibility text are not shown here.</p>
+        <div class="party-grid-wrap"><QuickGrid TGridItem="OrganizerAuditRow" ItemsProvider="ProvideAudits" Pagination="pagination" Class="party-grid audit-grid"><PropertyColumn Property="audit => audit.OccurredAtUtc" Title="When (UTC)" Sortable="true" IsDefaultSortColumn="true" InitialSortDirection="SortDirection.Descending" /><PropertyColumn Property="audit => audit.EventType" Title="Event" Sortable="true" /><PropertyColumn Property="audit => audit.Outcome" Title="Outcome" Sortable="true" /><PropertyColumn Property="audit => audit.Actor" Title="Actor" Sortable="true" /></QuickGrid></div>
+        <Paginator State="pagination" />
+    </section>
+</main>
+@code { private readonly PaginationState pagination = new() { ItemsPerPage = 25 }; private ValueTask<GridItemsProviderResult<OrganizerAuditRow>> ProvideAudits(GridItemsProviderRequest<OrganizerAuditRow> request) => OrganizerService.GetAuditsAsync(request); }

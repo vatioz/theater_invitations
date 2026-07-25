@@ -67,6 +67,23 @@ button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a744
 .organizer-page h1 { font-size: clamp(2rem, 6vw, 3.5rem); }
 .organizer-page h2 { margin-top: 0; }
 .organizer-page > section { margin-top: 1.5rem; width: 100%; }
+.organizer-nav { display: flex; gap: .2rem; margin-top: 1.25rem; border-bottom: 1px solid #d8d1c4; overflow-x: auto; }
+.organizer-nav a { flex: 0 0 auto; padding: .75rem .9rem; color: #35434a; font: bold .8rem Arial, sans-serif; text-decoration: none; }
+.organizer-nav a.active { border-bottom: 3px solid #a74420; color: #a74420; }
+.overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }
+.overview-card { width: 100%; }
+.overview-links { display: grid; gap: .65rem; }
+.overview-links a { display: grid; gap: .2rem; padding: .8rem; border: 1px solid #d8d1c4; color: #35434a; text-decoration: none; }
+.overview-links a:hover { background: #faf7f0; }
+.overview-links span, .recent-activity li span { color: #58656a; font: .85rem/1.4 Arial, sans-serif; }
+.section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.section-heading a { color: #a74420; font-family: Arial, sans-serif; }
+.recent-activity ul { display: grid; gap: .6rem; padding: 0; list-style: none; }
+.recent-activity li { display: flex; flex-wrap: wrap; gap: .45rem; padding-bottom: .6rem; border-bottom: 1px solid #d8d1c4; }
+.party-filter-form { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1rem; }
+.party-filter-form input, .party-filter-form select { min-height: 2.5rem; padding: .45rem .55rem; border: 1px solid #a9a294; background: white; font: normal 1rem Arial, sans-serif; }
+.party-filter-form input { flex: 1 1 16rem; }
+.parties-page-card, .audit-page-card, .settings-card { width: 100%; }
 .metrics { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); background: #d8d1c4; }
 .metrics p { margin: 0; padding: 1.2rem; background: #fffdf8; font-family: Arial, sans-serif; }
 .metrics strong { display: block; font-size: 2rem; color: #a74420; }
@@ -121,6 +138,7 @@ th { color: #58656a; font-size: .75rem; letter-spacing: .05em; text-transform: u
 @media (max-width: 760px) {
     .manage-actions { grid-template-columns: 1fr; }
     .manage-heading { align-items: stretch; flex-direction: column; }
+    .overview-grid { grid-template-columns: 1fr; }
     .batch-draft-fields { grid-template-columns: 1fr; }
     .draft-review-heading { align-items: stretch; flex-direction: column; }
 }
