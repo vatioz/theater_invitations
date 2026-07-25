@@ -34,6 +34,13 @@ public sealed class InvitationParty
         var requestedStatus = response == RsvpResponse.Confirm ? InvitationStatus.Confirmed : InvitationStatus.Declined;
         if (Status == requestedStatus)
         {
+            if (requestedStatus == InvitationStatus.Confirmed && AccessibilityRequirements != accessibilityRequirements?.Trim())
+            {
+                AccessibilityRequirements = accessibilityRequirements?.Trim();
+                RespondedAtUtc = nowUtc;
+                return RsvpResult.Applied;
+            }
+
             return RsvpResult.Idempotent;
         }
 

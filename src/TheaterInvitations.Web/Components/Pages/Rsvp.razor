@@ -1,0 +1,153 @@
+@page "/rsvp/{Token}"
+@rendermode InteractiveServer
+@using TheaterInvitations.Domain
+@using TheaterInvitations.Web.Services
+@inject RsvpInvitationService InvitationService
+@inject RsvpService RsvpService
+
+<PageTitle>RSVP</PageTitle>
+
+<main class="rsvp-page">
+    @if (invitation is null)
+    {
+        <section class="rsvp-card" aria-labelledby="invalid-link-heading">
+            <h1 id="invalid-link-heading">This RSVP link is not available</h1>
+            <p>The link may be invalid, expired, or no longer active. Please contact the event organizer for help.</p>
+        </section>
+    }
+    else if (invitation.IsLocked)
+    {
+        <UnavailableView Heading="RSVP responses are closed" Invitation="invitation" />
+    }
+    else if (invitation.IsExpired)
+    {
+        <UnavailableView Heading="The RSVP deadline has passed" Invitation="invitation" />
+    }
+    else if (submitted || (invitation.Status is InvitationStatus.Confirmed or InvitationStatus.Declined && !editing))
+    {
+        <section class="rsvp-card" aria-labelledby="recorded-heading">
+            <p class="eyebrow">Response recorded</p>
+            <h1 id="recorded-heading">Thank you, @invitation.PrimaryGuestName</h1>
+            <p>@StatusMessage()</p>
+            <p>This invitation covers @SeatDescription(invitation.AllocatedSeats).</p>
+            @if (!submitted)
+            {
+                <button type="button" @onclick="BeginEditing">Update RSVP</button>
+            }
+        </section>
+    }
+    else
+    {
+        <section class="rsvp-card" aria-labelledby="rsvp-heading">
+            <p class="eyebrow">Theater invitation</p>
+            <h1 id="rsvp-heading">Will you join us, @invitation.PrimaryGuestName?</h1>
+            <p>This invitation covers @SeatDescription(invitation.AllocatedSeats).</p>
+            @if (invitation.AllocatedSeats > 1)
+            {
+                <p class="notice">Your response confirms or declines the complete party allocation.</p>
+            }
+            <p class="deadline">Please respond by <strong>@FormatDeadline(invitation)</strong>.</p>
+
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <p class="validation-message" role="alert">@error</p>
+            }
+
+            <EditForm Model="model" OnValidSubmit="SubmitAsync" FormName="rsvp">
+                <DataAnnotationsValidator />
+                <fieldset disabled="@submitting">
+                    <legend>Your response</legend>
+                    <InputRadioGroup @bind-Value="model.Response">
+                        <label><InputRadio Value="RsvpResponse.Confirm" /> Confirm attendance</label>
+                        <label><InputRadio Value="RsvpResponse.Decline" /> Decline attendance</label>
+                    </InputRadioGroup>
+                    @if (model.Response == RsvpResponse.Confirm)
+                    {
+                        <label for="accessibility">Accessibility requirements (optional)</label>
+                        <p id="accessibility-help">Share only details that help the venue support your party. Maximum @invitation.AccessibilityTextLimit characters.</p>
+                        <InputTextArea id="accessibility" @bind-Value="model.AccessibilityRequirements" maxlength="@invitation.AccessibilityTextLimit" aria-describedby="accessibility-help" />
+                    }
+                    <button type="submit">@(submitting ? "Saving..." : "Submit RSVP")</button>
+                </fieldset>
+            </EditForm>
+        </section>
+    }
+</main>
+
+@code {
+    [Parameter] public string Token { get; set; } = string.Empty;
+
+    private RsvpInvitation? invitation;
+    private readonly RsvpModel model = new();
+    private bool submitting;
+    private bool submitted;
+    private bool editing;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        invitation = await InvitationService.GetAsync(Token);
+        if (invitation is not null && invitation.Status is InvitationStatus.Confirmed or InvitationStatus.Declined)
+        {
+            model.Response = invitation.Status == InvitationStatus.Confirmed ? RsvpResponse.Confirm : RsvpResponse.Decline;
+            model.AccessibilityRequirements = invitation.AccessibilityRequirements;
+        }
+    }
+
+    private void BeginEditing()
+    {
+        if (invitation is not null)
+        {
+            model.Response = invitation.Status == InvitationStatus.Confirmed ? RsvpResponse.Confirm : RsvpResponse.Decline;
+            model.AccessibilityRequirements = invitation.AccessibilityRequirements;
+        }
+
+        editing = true;
+        submitted = false;
+    }
+
+    private async Task SubmitAsync()
+    {
+        submitting = true;
+        error = null;
+        try
+        {
+            var result = await RsvpService.SubmitAsync(Token, new RsvpSubmission(model.Response, model.AccessibilityRequirements), Guid.NewGuid().ToString("N"));
+            invitation = await InvitationService.GetAsync(Token);
+            if (!result.IsValidToken || result.Result is RsvpResult.Locked or RsvpResult.Expired or RsvpResult.CapacityExceeded)
+            {
+                error = result.Result == RsvpResult.CapacityExceeded ? "We could not record a confirmation because no seats are available. Please contact the organizer." : "This RSVP is no longer available.";
+                return;
+            }
+
+            submitted = true;
+            editing = false;
+        }
+        catch (ArgumentException)
+        {
+            error = "Please shorten the accessibility requirements and try again.";
+        }
+        finally
+        {
+            submitting = false;
+        }
+    }
+
+    private static string SeatDescription(int seats) => seats == 1 ? "1 seat" : $"{seats} seats for you and your guest";
+
+    private string StatusMessage() => model.Response == RsvpResponse.Confirm
+        ? "Your party is confirmed."
+        : "Your party has been declined.";
+
+    private static string FormatDeadline(RsvpInvitation invitation)
+    {
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(invitation.TimeZoneId);
+        return TimeZoneInfo.ConvertTime(invitation.DeadlineUtc, timeZone).ToString("f") + $" ({timeZone.StandardName})";
+    }
+
+    private sealed class RsvpModel
+    {
+        public RsvpResponse Response { get; set; } = RsvpResponse.Confirm;
+        public string? AccessibilityRequirements { get; set; }
+    }
+}

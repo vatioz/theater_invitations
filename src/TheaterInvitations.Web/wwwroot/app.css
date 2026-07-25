@@ -36,3 +36,18 @@ h1:focus {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
 }
+* { box-sizing: border-box; }
+
+body { margin: 0; background: #f4f0e8; color: #1e2930; font-family: Georgia, "Times New Roman", serif; }
+
+.rsvp-page { display: grid; min-height: 100vh; place-items: center; padding: 2rem 1rem; }
+.rsvp-card { width: min(100%, 42rem); padding: clamp(1.5rem, 5vw, 3rem); border-top: 6px solid #a74420; background: #fffdf8; box-shadow: 0 1rem 3rem rgb(30 41 48 / 12%); }
+.rsvp-card h1 { font-size: clamp(2rem, 7vw, 3.6rem); line-height: 1; margin: .25rem 0 1.5rem; }
+.eyebrow { color: #a74420; font-family: Arial, sans-serif; font-size: .8rem; font-weight: bold; letter-spacing: .12em; text-transform: uppercase; }
+.notice, .deadline { padding: 1rem; background: #edf2ee; }
+fieldset { display: grid; gap: .85rem; margin: 1.5rem 0 0; padding: 0; border: 0; }
+legend { font-weight: bold; margin-bottom: .5rem; }
+label { font-family: Arial, sans-serif; }
+textarea { width: 100%; min-height: 7rem; resize: vertical; }
+button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a74420; color: white; cursor: pointer; font: inherit; }
+.validation-message { color: #922b15; font-weight: bold; }
