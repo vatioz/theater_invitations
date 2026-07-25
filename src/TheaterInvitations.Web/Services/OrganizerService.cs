@@ -157,6 +157,19 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         return new OrganizerDraftDetail(batch.Id, batch.Name, batch.DeadlineUtc, batch.State, batch.Version, batch.ValidationIssue, parsed.Rows.Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.Name, x.Email, x.Company, x.AllocatedSeats, x.Issue)).ToList());
     }
 
+    public async Task DeleteDraftAsync(Guid batchId, uint expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        await using var operationDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, cancellationToken);
+        if (batch.State == InvitationBatchState.Committed) throw new InvalidOperationException("Committed batches cannot be deleted as drafts.");
+        if (batch.Version != expectedVersion) throw new StaleDataException("This draft changed after you opened it. The current draft has been loaded.");
+        operationDb.InvitationDraftRows.RemoveRange(operationDb.InvitationDraftRows.Where(x => x.BatchId == batchId));
+        operationDb.InvitationBatches.Remove(batch);
+        AddAudit(operationDb, "BatchDraftDeleted", "Accepted", batchId, null, actor, null);
+        await operationDb.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task CommitDraftAsync(Guid batchId, uint expectedVersion, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);

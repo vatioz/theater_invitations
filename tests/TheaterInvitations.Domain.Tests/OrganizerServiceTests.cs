@@ -311,6 +311,21 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Operator_can_delete_an_uncommitted_draft_and_its_rows()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+        var draft = await service.SaveDraftAsync(new BatchDraftInput("Disposable wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,1");
+
+        await service.DeleteDraftAsync(draft.Id, draft.Version);
+
+        Assert.Empty(db.InvitationBatches);
+        Assert.Empty(db.InvitationDraftRows);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchDraftDeleted" && x.Outcome == "Accepted");
+    }
+
+    [Fact]
     public async Task Committing_a_prepared_draft_creates_party_token_and_delivery_envelope_together()
     {
         await using var db = CreateDb();
