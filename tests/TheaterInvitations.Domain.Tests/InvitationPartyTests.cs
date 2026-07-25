@@ -32,6 +32,19 @@ public sealed class InvitationPartyTests
     }
 
     [Fact]
+    public void Confirmed_party_can_update_accessibility_requirements_before_deadline()
+    {
+        var party = CreateParty(1);
+        party.Respond(RsvpResponse.Confirm, "Initial requirement", Now.AddHours(1), false, Now);
+
+        var result = party.Respond(RsvpResponse.Confirm, "Updated requirement", Now.AddHours(1), false, Now.AddMinutes(1));
+
+        Assert.Equal(RsvpResult.Applied, result);
+        Assert.Equal("Updated requirement", party.AccessibilityRequirements);
+        Assert.Equal(Now.AddMinutes(1), party.RespondedAtUtc);
+    }
+
+    [Fact]
     public void Declining_clears_accessibility_requirements()
     {
         var party = CreateParty(1);

@@ -1,0 +1,11 @@
+@using TheaterInvitations.Web.Services
+
+<section class="rsvp-card" aria-labelledby="unavailable-heading">
+    <h1 id="unavailable-heading">@Heading</h1>
+    <p>Self-service RSVP is unavailable. For assistance, contact <a href="mailto:@Invitation.SupportEmail">@Invitation.SupportEmail</a>.</p>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Heading { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public RsvpInvitation Invitation { get; set; } = default!;
+}
