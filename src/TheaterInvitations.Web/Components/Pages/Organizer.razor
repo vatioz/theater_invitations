@@ -2,19 +2,16 @@
 @attribute [Authorize(Policy = "OrganizerViewer")]
 @rendermode InteractiveServer
 @using TheaterInvitations.Web.Services
-@using TheaterInvitations.Web.Data
-@using TheaterInvitations.Domain
-@using System.ComponentModel.DataAnnotations
 @inject OrganizerService OrganizerService
-@inject AuthenticationStateProvider AuthenticationStateProvider
 
-<PageTitle>Organizer</PageTitle>
+<PageTitle>Organizer overview</PageTitle>
 
 <main class="organizer-page">
     <header>
         <p class="eyebrow">Organizer</p>
         <h1>Invitation administration</h1>
         <p>Development access: <a href="/dev/login/Viewer">Viewer</a> | <a href="/dev/login/Operator">Operator</a> | <a href="/dev/login/ElevatedOperator">Elevated operator</a> | <a href="/dev/logout">Sign out</a></p>
+        <OrganizerNavigation />
     </header>
 
     @if (dashboard is null)
@@ -34,418 +31,78 @@
             <p><strong>@dashboard.PartyCount</strong> parties</p>
         </section>
 
-        <section class="rsvp-card">
-            <h2>Event configuration</h2>
-            @if (dashboard.Configuration is null)
-            {
-                <p>Event configuration has not been created. Public RSVP submissions are unavailable until an elevated organizer saves it.</p>
-            }
-            else
-            {
-                <p>Public RSVP pages use the saved event details and support contact.</p>
-                <dl class="configuration-summary">
-                    <div><dt>Event</dt><dd>@dashboard.Configuration.EventName</dd></div>
-                    <div><dt>Venue</dt><dd>@dashboard.Configuration.VenueName</dd></div>
-                    <div><dt>Support</dt><dd>@(string.IsNullOrWhiteSpace(dashboard.Configuration.SupportEmail) ? "Not configured" : dashboard.Configuration.SupportEmail)</dd></div>
-                    <div><dt>Time zone</dt><dd>@dashboard.Configuration.TimeZoneId</dd></div>
-                </dl>
-            }
-            <AuthorizeView Roles="ElevatedOperator" Context="supportAuth">
-                <Authorized>
-                    <EditForm Model="eventConfiguration" OnValidSubmit="SaveEventConfigurationAsync" FormName="event-configuration" class="manage-form">
-                        <DataAnnotationsValidator />
-                        <ValidationSummary />
-                        <label>Event name <InputText @bind-Value="eventConfiguration.EventName" /></label>
-                        <label>Event time zone <InputText @bind-Value="eventConfiguration.TimeZoneId" /></label>
-                        <label>Doors time <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="eventConfiguration.DoorsLocal" /></label>
-                        <label>Start time <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="eventConfiguration.StartsLocal" /></label>
-                        <label>Venue name <InputText @bind-Value="eventConfiguration.VenueName" /></label>
-                        <label>Venue address <InputTextArea @bind-Value="eventConfiguration.VenueAddress" /></label>
-                        <label>Dress code (optional) <InputText @bind-Value="eventConfiguration.DressCode" /></label>
-                        <label>Support email (optional) <InputText @bind-Value="eventConfiguration.SupportEmail" /></label>
-                        <label>Capacity <InputNumber @bind-Value="eventConfiguration.Capacity" /></label>
-                        <label>Accessibility character limit <InputNumber @bind-Value="eventConfiguration.AccessibilityTextLimit" /></label>
-                        <button type="submit">Save event configuration</button>
-                    </EditForm>
-                </Authorized>
-                <NotAuthorized>
-                    <p>You have read-only access to event configuration.</p>
-                </NotAuthorized>
-            </AuthorizeView>
-        </section>
-
-        <section class="rsvp-card">
-            <h2>Global RSVP lock</h2>
-            <p>Guest RSVP is currently <strong>@(dashboard.IsRsvpLocked ? "locked" : "open")</strong>.</p>
-            <AuthorizeView Roles="ElevatedOperator" Context="lockAuth">
-                <Authorized>
-                    @if (!confirmingLock)
-                    {
-                        <button @onclick="(() => confirmingLock = true)">@(dashboard.IsRsvpLocked ? "Unlock RSVP" : "Lock RSVP")</button>
-                    }
-                    else
-                    {
-                        <p class="notice">Confirm that you want to @(dashboard.IsRsvpLocked ? "unlock" : "lock") all guest RSVP changes.</p>
-                        <button @onclick="ToggleLockAsync">Confirm</button> <button @onclick="(() => confirmingLock = false)">Cancel</button>
-                    }
-                </Authorized>
-            </AuthorizeView>
-        </section>
-
-        <section class="rsvp-card">
-            <h2>Batch drafts</h2>
-            <p>Upload CSV columns: <code>primary_guest_name,email,company,allocated_seats</code>.</p>
-            <AuthorizeView Roles="Operator,ElevatedOperator" Context="draftAuth">
-                <Authorized>
-                    @if (dashboard.Configuration is null)
-                    {
-                        <p class="validation-message">Configure the event before creating a batch draft.</p>
-                    }
-                    else
-                    {
-                        <EditForm Model="draftInput" OnValidSubmit="SaveDraftAsync" OnInvalidSubmit="InvalidDraftSubmit" FormName="batch-draft" class="manage-form batch-draft-form">
-                            <DataAnnotationsValidator />
-                            <ValidationSummary />
-                            <div class="batch-draft-fields">
-                                <label>Batch name <InputText @bind-Value="draftInput.Name" /> <ValidationMessage For="@(() => draftInput.Name)" /></label>
-                                <label>Deadline <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="draftInput.DeadlineLocal" /></label>
-                            </div>
-                            <p class="form-help">All batch deadlines use <strong>@dashboard.Configuration.TimeZoneId</strong>. Capacity is checked again when you commit.</p>
-                            <label class="file-picker">CSV file <InputFile OnChange="SelectDraftFile" accept=".csv,text/csv" /></label>
-                            @if (draftFile is not null) { <p class="file-selected">Selected: @draftFile.Name</p> }
-                            @if (!string.IsNullOrWhiteSpace(draftFormError)) { <p class="validation-message" role="alert">@draftFormError</p> }
-                            <button type="submit">Save draft for review</button>
-                        </EditForm>
-                    }
-                    @if (selectedDraft is not null)
-                    {
-                        <div class="draft-review">
-                        <div class="draft-review-heading"><div><p class="eyebrow">Draft review</p><h3>@selectedDraft.Name</h3></div><span class="draft-state">@selectedDraft.State</span></div>
-                        <p>@selectedDraft.Rows.Count rows: <strong>@selectedDraft.Rows.Count(x => x.ValidationIssue is null) valid</strong>, @selectedDraft.Rows.Count(x => x.ValidationIssue is not null) invalid. Deadline: @FormatBatchDeadline(selectedDraft.DeadlineUtc).</p>
-                        @if (!string.IsNullOrWhiteSpace(selectedDraft.ValidationIssue))
+        <div class="overview-grid">
+            <section class="rsvp-card overview-card">
+                <h2>RSVP status</h2>
+                <p>Guest RSVP is currently <strong>@(dashboard.IsRsvpLocked ? "locked" : "open")</strong>.</p>
+                @if (dashboard.Configuration is null)
+                {
+                    <p class="validation-message">Event configuration is incomplete. RSVP submissions are unavailable.</p>
+                }
+                else
+                {
+                    <p>Support: @(string.IsNullOrWhiteSpace(dashboard.Configuration.SupportEmail) ? "not configured" : dashboard.Configuration.SupportEmail).</p>
+                }
+                <AuthorizeView Roles="ElevatedOperator" Context="lockAuth">
+                    <Authorized>
+                        @if (confirmingLock)
                         {
-                            <p class="validation-message">@selectedDraft.ValidationIssue</p>
-                        }
-                        @foreach (var row in selectedDraft.Rows.Where(x => x.ValidationIssue is not null))
-                        {
-                            <p class="validation-message">Row @row.SourceRowNumber: @row.ValidationIssue</p>
-                        }
-                        @if (selectedDraft.State == InvitationBatchState.Prepared)
-                        {
-                            @if (confirmingDraftCommit)
-                            {
-                                <p class="notice">Commit this batch? Capacity and duplicate emails will be rechecked before parties are created.</p>
-                                <button @onclick="CommitDraftAsync">Confirm commit</button> <button class="button-secondary" @onclick="(() => confirmingDraftCommit = false)">Cancel</button>
-                            }
-                            else
-                            {
-                                <button @onclick="(() => confirmingDraftCommit = true)">Commit draft batch</button>
-                            }
-                        }
-                        @if (confirmingDraftDelete)
-                        {
-                            <p class="notice">Delete this draft and all of its saved rows? This cannot be undone.</p>
-                            <button class="button-danger" @onclick="DeleteDraftAsync">Delete draft</button> <button class="button-secondary" @onclick="(() => confirmingDraftDelete = false)">Cancel</button>
+                            <p class="notice">Confirm that you want to @(dashboard.IsRsvpLocked ? "unlock" : "lock") all guest RSVP changes.</p>
+                            <button @onclick="ToggleLockAsync">Confirm</button> <button class="button-secondary" @onclick="(() => confirmingLock = false)">Cancel</button>
                         }
                         else
                         {
-                            <button class="button-secondary" @onclick="(() => confirmingDraftDelete = true)">Delete draft</button>
+                            <button @onclick="(() => confirmingLock = true)">@(dashboard.IsRsvpLocked ? "Unlock RSVP" : "Lock RSVP")</button>
                         }
-                        </div>
-                    }
-                    @if (drafts.Count > 0)
-                    {
-                        <h3>Saved drafts</h3>
-                        <div class="saved-draft-list">
-                            @foreach (var draft in drafts)
-                            {
-                                <div><button class="button-secondary" @onclick="(() => LoadDraftAsync(draft.Id))">Review</button><span><strong>@draft.Name</strong><br /><small>@draft.State, deadline @FormatBatchDeadline(draft.DeadlineUtc)</small></span></div>
-                            }
-                        </div>
-                    }
-                </Authorized>
-                <NotAuthorized><p>You have read-only access.</p></NotAuthorized>
-            </AuthorizeView>
-        </section>
-
-        <section class="rsvp-card">
-            <h2>Parties</h2>
-            <EditForm Model="filters" OnValidSubmit="ApplyFiltersAsync" FormName="party-filters">
-                <InputText @bind-Value="filters.Search" placeholder="Search name, email, or company" />
-                <InputSelect @bind-Value="filters.Status">
-                    <option value="">All statuses</option>
-                    @foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }
-                </InputSelect>
-                <InputSelect @bind-Value="filters.BatchId">
-                    <option value="">All batches</option>
-                    @foreach (var batch in batches) { <option value="@batch.Id">@batch.Name</option> }
-                </InputSelect>
-                <button type="submit">Filter</button>
-            </EditForm>
-            <div class="party-grid-wrap">
-            <QuickGrid TGridItem="OrganizerParty" @ref="partyGrid" ItemsProvider="ProvideParties" Pagination="pagination" Class="party-grid">
-                <PropertyColumn Property="party => party.Name" Title="Name" Sortable="true" IsDefaultSortColumn="true" />
-                <PropertyColumn Property="party => party.Email" Title="Email" Sortable="true" />
-                <PropertyColumn Property="party => party.Company" Title="Company" Sortable="true" />
-                <PropertyColumn Property="party => party.AllocatedSeats" Title="Seats" Sortable="true" />
-                <PropertyColumn Property="party => party.Status" Title="Status" Sortable="true" />
-                <PropertyColumn Property="party => party.BatchName" Title="Batch" Sortable="true" />
-                <TemplateColumn Context="party">
-                    <AuthorizeView Roles="Operator,ElevatedOperator"><Authorized><button @onclick="(() => SelectParty(party))">Manage</button></Authorized></AuthorizeView>
-                </TemplateColumn>
-            </QuickGrid>
-            </div>
-            <Paginator State="pagination" />
-        </section>
-
-        <section class="rsvp-card">
-            <h2>Committed batch deadline</h2>
-            <AuthorizeView Roles="ElevatedOperator" Context="deadlineAuth">
-                <Authorized>
-                    <div class="manage-form deadline-change-form">
-                    <p>Changing a deadline can reactivate expired pending invitations. Capacity is rechecked when you confirm.</p>
-                    <label>Batch
-                        <InputSelect @bind-Value="deadlineChange.BatchId" @bind-Value:after="SelectDeadlineBatchAsync">
-                            <option value="">Select a committed batch</option>
-                            @foreach (var batch in batches.Where(x => x.State == InvitationBatchState.Committed)) { <option value="@batch.Id">@batch.Name</option> }
-                        </InputSelect>
-                    </label>
-                    @if (SelectedCommittedBatch is { } selectedBatch)
-                    {
-                        <p class="deadline-current">Current deadline: <strong>@FormatBatchDeadline(selectedBatch.DeadlineUtc)</strong></p>
-                    }
-                    <label>New deadline (@dashboard.Configuration?.TimeZoneId) <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="deadlineChange.DeadlineLocal" /></label>
-                    <label>Reason <InputText @bind-Value="deadlineChange.Reason" /></label>
-                    @if (confirmingDeadlineChange)
-                    {
-                        <p class="notice">Confirm the deadline change. Current capacity and batch version will be checked again.</p>
-                        <button @onclick="ChangeDeadlineAsync">Confirm deadline change</button> <button class="button-secondary" @onclick="(() => confirmingDeadlineChange = false)">Cancel</button>
-                    }
-                    else
-                    {
-                        <button @onclick="(() => confirmingDeadlineChange = true)" disabled="@(deadlineChange.BatchId is null)">Change deadline</button>
-                    }
-                    </div>
-                </Authorized>
-            </AuthorizeView>
-        </section>
-
-        @if (selectedParty is not null)
-        {
-            <section class="rsvp-card manage-party">
-                <div class="manage-heading">
-                    <div><p class="eyebrow">Party administration</p><h2>Manage @selectedParty.Name</h2></div>
-                    <button type="button" class="button-secondary" @onclick="CloseManage">Close</button>
-                </div>
-                <div class="manage-actions">
-                <AuthorizeView Roles="Operator,ElevatedOperator" Context="operatorAuth">
-                    <Authorized>
-                        <EditForm Model="correction" OnValidSubmit="CorrectAsync" FormName="party-correction" class="manage-form">
-                            <h3>Correct details</h3>
-                            <p>Update the party's contact information or seat allocation.</p>
-                            <DataAnnotationsValidator />
-                            <ValidationSummary />
-                            <label>Name <InputText @bind-Value="correction.Name" /> <ValidationMessage For="@(() => correction.Name)" /></label>
-                            <label>Email <InputText @bind-Value="correction.Email" /> <ValidationMessage For="@(() => correction.Email)" /></label>
-                            <label>Company <InputText @bind-Value="correction.Company" /></label>
-                            <label>Allocated seats <InputNumber @bind-Value="correction.Seats" /> <ValidationMessage For="@(() => correction.Seats)" /></label>
-                            <div class="form-actions"><button type="submit">Save correction</button> <button type="button" class="button-secondary" @onclick="CloseManage">Cancel</button></div>
-                        </EditForm>
                     </Authorized>
                 </AuthorizeView>
-                <AuthorizeView Roles="ElevatedOperator" Context="elevatedAuth">
-                    <Authorized>
-                        <EditForm Model="overrideModel" OnValidSubmit="OverrideAsync" FormName="party-override" class="manage-form manage-form-warning">
-                            <h3>Override status</h3>
-                            <p>Apply an exceptional status change. A reason is required for the audit trail.</p>
-                            <label>Status <InputSelect @bind-Value="overrideModel.Status">@foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }</InputSelect></label>
-                            <label>Reason <InputText @bind-Value="overrideModel.Reason" /></label>
-                            <div class="form-actions"><button type="submit">Apply override</button> <button type="button" class="button-secondary" @onclick="CloseManage">Cancel</button></div>
-                        </EditForm>
-                    </Authorized>
-                </AuthorizeView>
+            </section>
+
+            <section class="rsvp-card overview-card">
+                <h2>Workspaces</h2>
+                <div class="overview-links">
+                    <a href="/organizer/batches"><strong>Batch management</strong><span>Create, review, commit, and administer invitation waves.</span></a>
+                    <a href="/organizer/parties"><strong>Parties</strong><span>Search, filter, correct, and override invitation parties.</span></a>
+                    <a href="/organizer/settings"><strong>Event settings</strong><span>Review public event details and configuration.</span></a>
                 </div>
             </section>
-        }
+        </div>
 
-        <section class="rsvp-card">
-            <h2>Audit history</h2>
-            <div class="party-grid-wrap">
-                <QuickGrid TGridItem="OrganizerAudit" ItemsProvider="ProvideAudits" Pagination="auditPagination" Class="party-grid audit-grid">
-                    <PropertyColumn Property="audit => audit.OccurredAtUtc" Title="When (UTC)" Sortable="true" IsDefaultSortColumn="true" InitialSortDirection="SortDirection.Descending" />
-                    <PropertyColumn Property="audit => audit.EventType" Title="Event" Sortable="true" />
-                    <PropertyColumn Property="audit => audit.Outcome" Title="Outcome" Sortable="true" />
-                    <PropertyColumn Property="audit => audit.Actor" Title="Actor" Sortable="true" />
-                </QuickGrid>
-            </div>
-            <Paginator State="auditPagination" />
+        <section class="rsvp-card recent-activity">
+            <div class="section-heading"><h2>Recent activity</h2><a href="/organizer/audit">View full audit history</a></div>
+            @if (dashboard.Audits.Count == 0)
+            {
+                <p>No organizer activity has been recorded yet.</p>
+            }
+            else
+            {
+                <ul>
+                    @foreach (var audit in dashboard.Audits.Take(5))
+                    {
+                        <li><strong>@audit.EventType</strong> <span>@audit.Outcome by @audit.Actor, @audit.OccurredAtUtc.ToString("u")</span></li>
+                    }
+                </ul>
+            }
         </section>
     }
 </main>
 
 @code {
     private OrganizerDashboard? dashboard;
-    private OrganizerDraftDetail? selectedDraft;
-    private readonly PartyFilters filters = new();
-    private readonly PaginationState pagination = new() { ItemsPerPage = 25 };
-    private readonly PaginationState auditPagination = new() { ItemsPerPage = 25 };
-    private QuickGrid<OrganizerParty>? partyGrid;
-    private OrganizerParty? selectedParty;
-    private readonly CorrectionModel correction = new();
-    private readonly OverrideModel overrideModel = new();
-    private readonly EventConfigurationModel eventConfiguration = new();
-    private IReadOnlyList<OrganizerBatch> batches = Array.Empty<OrganizerBatch>();
-    private IReadOnlyList<OrganizerDraft> drafts = Array.Empty<OrganizerDraft>();
-    private readonly BatchDraftModel draftInput = new();
-    private IBrowserFile? draftFile;
-    private string? draftFormError;
-    private readonly DeadlineChangeModel deadlineChange = new();
-    private bool confirmingDraftCommit;
-    private bool confirmingDraftDelete;
-    private bool confirmingDeadlineChange;
     private bool confirmingLock;
     private string? actionError;
 
-    protected override async Task OnInitializedAsync()
-    {
-        await RefreshDashboardAsync();
-        batches = await OrganizerService.GetBatchesAsync();
-        drafts = await OrganizerService.GetDraftsAsync();
-    }
-
-    private void SelectDraftFile(InputFileChangeEventArgs args)
-    {
-        draftFile = args.File;
-        draftFormError = null;
-    }
-
-    private void InvalidDraftSubmit() => draftFormError = "Enter a batch name and deadline, then choose a CSV file.";
-
-    private async Task SaveDraftAsync()
-    {
-        await RequireRoleAsync("Operator", "ElevatedOperator");
-        if (draftFile is null)
-        {
-            draftFormError = "Choose a CSV file before saving the draft.";
-            return;
-        }
-        try
-        {
-            await using var stream = draftFile.OpenReadStream(1_000_000);
-            using var reader = new StreamReader(stream, new System.Text.UTF8Encoding(false, true), true);
-            selectedDraft = await OrganizerService.SaveDraftAsync(new BatchDraftInput(draftInput.Name, draftInput.DeadlineLocal), await reader.ReadToEndAsync());
-            drafts = await OrganizerService.GetDraftsAsync();
-            draftFormError = null;
-            confirmingDraftDelete = false;
-        }
-        catch (Exception exception) when (exception is IOException or ArgumentException or InvalidOperationException)
-        {
-            draftFormError = exception is IOException ? "CSV must be valid UTF-8 and 1 MB or smaller." : exception.Message;
-        }
-    }
-
-    private async Task CommitDraftAsync()
-    {
-        await RequireRoleAsync("Operator", "ElevatedOperator");
-        if (selectedDraft is not null)
-        {
-            try
-            {
-                await OrganizerService.CommitDraftAsync(selectedDraft.Id, selectedDraft.Version);
-                selectedDraft = null;
-                confirmingDraftCommit = false;
-                await RefreshDashboardAsync();
-                batches = await OrganizerService.GetBatchesAsync();
-                drafts = await OrganizerService.GetDraftsAsync();
-            }
-            catch (Exception exception) when (exception is InvalidOperationException or StaleDataException)
-            {
-                draftFormError = exception.Message;
-                selectedDraft = await OrganizerService.GetDraftAsync(selectedDraft!.Id);
-                confirmingDraftCommit = false;
-            }
-        }
-    }
-
-    private async Task DeleteDraftAsync()
-    {
-        await RequireRoleAsync("Operator", "ElevatedOperator");
-        if (selectedDraft is null) return;
-        var draftId = selectedDraft.Id;
-        try
-        {
-            await OrganizerService.DeleteDraftAsync(draftId, selectedDraft.Version);
-            selectedDraft = null;
-            confirmingDraftDelete = false;
-            draftFormError = null;
-            drafts = await OrganizerService.GetDraftsAsync();
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or StaleDataException)
-        {
-            draftFormError = exception.Message;
-            confirmingDraftDelete = false;
-            selectedDraft = await OrganizerService.GetDraftAsync(draftId);
-        }
-    }
+    protected override async Task OnInitializedAsync() => await RefreshAsync();
 
     private async Task ToggleLockAsync()
     {
-        await RequireRoleAsync("ElevatedOperator");
-        if (dashboard is not null)
-        {
-            try
-            {
-                await OrganizerService.SetGlobalLockAsync(!dashboard.IsRsvpLocked);
-                confirmingLock = false;
-                await RefreshDashboardAsync();
-            }
-            catch (InvalidOperationException exception)
-            {
-                actionError = exception.Message;
-            }
-        }
-    }
-
-    private async Task ApplyFiltersAsync()
-    {
-        await pagination.SetCurrentPageIndexAsync(0);
-        if (partyGrid is not null) await partyGrid.RefreshDataAsync();
-    }
-
-    private async Task RefreshDashboardAsync()
-    {
-        dashboard = await OrganizerService.GetDashboardAsync();
-        eventConfiguration.Load(dashboard.Configuration);
-        if (partyGrid is not null) await partyGrid.RefreshDataAsync();
-    }
-
-    private async Task LoadDraftAsync(Guid batchId)
-    {
-        selectedDraft = await OrganizerService.GetDraftAsync(batchId);
-        confirmingDraftCommit = false;
-        confirmingDraftDelete = false;
-        draftFormError = selectedDraft is null ? "That draft is no longer available." : null;
-    }
-
-    private async Task SaveEventConfigurationAsync()
-    {
-        await RequireRoleAsync("ElevatedOperator");
+        if (dashboard is null) return;
         try
         {
-            await OrganizerService.SaveEventConfigurationAsync(
-                new EventConfigurationInput(eventConfiguration.Capacity, eventConfiguration.EventName, eventConfiguration.DoorsLocal, eventConfiguration.StartsLocal, eventConfiguration.VenueName, eventConfiguration.VenueAddress, eventConfiguration.DressCode, eventConfiguration.TimeZoneId, eventConfiguration.SupportEmail, eventConfiguration.AccessibilityTextLimit),
-                dashboard!.Configuration?.Version);
+            await OrganizerService.SetGlobalLockAsync(!dashboard.IsRsvpLocked);
+            confirmingLock = false;
             actionError = null;
-            await RefreshDashboardAsync();
-        }
-        catch (StaleDataException exception)
-        {
-            actionError = exception.Message;
-            await RefreshDashboardAsync();
-        }
-        catch (ArgumentException exception)
-        {
-            actionError = exception.Message;
+            await RefreshAsync();
         }
         catch (InvalidOperationException exception)
         {
@@ -453,135 +110,5 @@
         }
     }
 
-    private async Task ChangeDeadlineAsync()
-    {
-        await RequireRoleAsync("ElevatedOperator");
-        var batch = batches.SingleOrDefault(x => x.Id == deadlineChange.BatchId);
-        if (batch is null) { actionError = "Select a committed batch."; return; }
-        try
-        {
-            await OrganizerService.ChangeBatchDeadlineAsync(batch.Id, batch.Version, deadlineChange.DeadlineLocal, deadlineChange.Reason);
-            confirmingDeadlineChange = false;
-            actionError = null;
-            await RefreshDashboardAsync();
-            batches = await OrganizerService.GetBatchesAsync();
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException)
-        {
-            actionError = exception.Message;
-            confirmingDeadlineChange = false;
-            batches = await OrganizerService.GetBatchesAsync();
-        }
-    }
-
-    private Task SelectDeadlineBatchAsync()
-    {
-        confirmingDeadlineChange = false;
-        var batch = SelectedCommittedBatch;
-        if (batch is not null && dashboard?.Configuration is not null)
-        {
-            var timeZone = TimeZoneInfo.FindSystemTimeZoneById(dashboard.Configuration.TimeZoneId);
-            deadlineChange.DeadlineLocal = TimeZoneInfo.ConvertTime(batch.DeadlineUtc, timeZone).DateTime;
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private ValueTask<GridItemsProviderResult<OrganizerParty>> ProvideParties(GridItemsProviderRequest<OrganizerParty> request) =>
-        OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status, filters.BatchId);
-
-    private ValueTask<GridItemsProviderResult<OrganizerAudit>> ProvideAudits(GridItemsProviderRequest<OrganizerAudit> request) =>
-        OrganizerService.GetAuditsAsync(request);
-
-    private void SelectParty(OrganizerParty party)
-    {
-        selectedParty = party;
-        correction.Name = party.Name; correction.Email = party.Email; correction.Company = party.Company; correction.Seats = party.AllocatedSeats;
-        overrideModel.Status = party.Status; overrideModel.Reason = string.Empty; actionError = null;
-    }
-
-    private async Task CorrectAsync()
-    {
-        await RequireRoleAsync("Operator", "ElevatedOperator");
-        try { await OrganizerService.CorrectPartyAsync(selectedParty!.Id, selectedParty.Version, correction.Name, correction.Email, correction.Company, correction.Seats); CloseManage(); await RefreshDashboardAsync(); }
-        catch (StaleDataException exception) { actionError = exception.Message; selectedParty = null; await RefreshDashboardAsync(); }
-        catch (ArgumentException exception) { actionError = exception.Message; }
-        catch (InvalidOperationException exception) { actionError = exception.Message; }
-    }
-
-    private async Task OverrideAsync()
-    {
-        await RequireRoleAsync("ElevatedOperator");
-        try { await OrganizerService.OverrideStatusAsync(selectedParty!.Id, selectedParty.Version, overrideModel.Status, overrideModel.Reason); CloseManage(); await RefreshDashboardAsync(); }
-        catch (StaleDataException exception) { actionError = exception.Message; selectedParty = null; await RefreshDashboardAsync(); }
-        catch (ArgumentException exception) { actionError = exception.Message; }
-        catch (InvalidOperationException exception) { actionError = exception.Message; }
-    }
-
-    private void CloseManage()
-    {
-        selectedParty = null;
-        actionError = null;
-    }
-
-    private async Task RequireRoleAsync(params string[] roles)
-    {
-        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-        if (!roles.Any(user.IsInRole))
-        {
-            throw new UnauthorizedAccessException();
-        }
-    }
-
-    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } public Guid? BatchId { get; set; } }
-    private sealed class BatchDraftModel { [Required] public string Name { get; set; } = string.Empty; public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); }
-    private sealed class DeadlineChangeModel { public Guid? BatchId { get; set; } public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); public string Reason { get; set; } = string.Empty; }
-    private sealed class CorrectionModel
-    {
-        [Required] public string Name { get; set; } = string.Empty;
-        [Required, EmailAddress] public string Email { get; set; } = string.Empty;
-        public string? Company { get; set; }
-        [Range(1, int.MaxValue)] public int Seats { get; set; }
-    }
-    private sealed class OverrideModel { public InvitationStatus Status { get; set; } public string Reason { get; set; } = string.Empty; }
-    private sealed class EventConfigurationModel
-    {
-        public int Capacity { get; set; } = 340;
-        public string EventName { get; set; } = string.Empty;
-        public DateTime DoorsLocal { get; set; } = DateTime.Today.AddHours(18);
-        public DateTime StartsLocal { get; set; } = DateTime.Today.AddHours(19);
-        public string VenueName { get; set; } = string.Empty;
-        public string VenueAddress { get; set; } = string.Empty;
-        public string? DressCode { get; set; }
-        public string TimeZoneId { get; set; } = "Europe/Prague";
-        public string? SupportEmail { get; set; }
-        public int AccessibilityTextLimit { get; set; } = 500;
-
-        public void Load(TheaterInvitations.Web.Data.EventConfiguration? configuration)
-        {
-            if (configuration is null) return;
-            Capacity = configuration.Capacity;
-            EventName = configuration.EventName;
-            var timeZone = TimeZoneInfo.FindSystemTimeZoneById(configuration.TimeZoneId);
-            if (configuration.DoorsAtUtc != default) DoorsLocal = TimeZoneInfo.ConvertTime(configuration.DoorsAtUtc, timeZone).DateTime;
-            if (configuration.StartsAtUtc != default) StartsLocal = TimeZoneInfo.ConvertTime(configuration.StartsAtUtc, timeZone).DateTime;
-            VenueName = configuration.VenueName;
-            VenueAddress = configuration.VenueAddress;
-            DressCode = configuration.DressCode;
-            TimeZoneId = configuration.TimeZoneId;
-            SupportEmail = configuration.SupportEmail;
-            AccessibilityTextLimit = configuration.AccessibilityTextLimit;
-        }
-    }
-
-    private string FormatBatchDeadline(DateTimeOffset deadlineUtc)
-    {
-        if (dashboard?.Configuration is null) return deadlineUtc.ToString("u");
-        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(dashboard.Configuration.TimeZoneId);
-        return $"{TimeZoneInfo.ConvertTime(deadlineUtc, timeZone):f} ({dashboard.Configuration.TimeZoneId})";
-    }
-
-    private OrganizerBatch? SelectedCommittedBatch => deadlineChange.BatchId is null
-        ? null
-        : batches.SingleOrDefault(x => x.Id == deadlineChange.BatchId && x.State == InvitationBatchState.Committed);
+    private async Task RefreshAsync() => dashboard = await OrganizerService.GetDashboardAsync();
 }

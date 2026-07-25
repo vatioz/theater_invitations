@@ -1,0 +1,72 @@
+@page "/organizer/settings"
+@attribute [Authorize(Policy = "OrganizerViewer")]
+@rendermode InteractiveServer
+@using System.ComponentModel.DataAnnotations
+@using TheaterInvitations.Web.Data
+@using TheaterInvitations.Web.Services
+@inject OrganizerService OrganizerService
+
+<PageTitle>Event settings</PageTitle>
+
+<main class="organizer-page">
+    <header><p class="eyebrow">Organizer</p><h1>Event settings</h1><OrganizerNavigation /></header>
+    @if (dashboard is null) { <p>Loading event configuration...</p> }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }
+        <section class="rsvp-card settings-card">
+            <h2>Public event configuration</h2>
+            @if (dashboard.Configuration is null) { <p>Event configuration has not been created. Public RSVP submissions remain unavailable until an elevated organizer saves it.</p> }
+            else
+            {
+                <dl class="configuration-summary">
+                    <div><dt>Event</dt><dd>@dashboard.Configuration.EventName</dd></div>
+                    <div><dt>Venue</dt><dd>@dashboard.Configuration.VenueName</dd></div>
+                    <div><dt>Support</dt><dd>@(string.IsNullOrWhiteSpace(dashboard.Configuration.SupportEmail) ? "Not configured" : dashboard.Configuration.SupportEmail)</dd></div>
+                    <div><dt>Time zone</dt><dd>@dashboard.Configuration.TimeZoneId</dd></div>
+                </dl>
+            }
+            <AuthorizeView Roles="ElevatedOperator" Context="settingsAuth">
+                <Authorized>
+                    <EditForm Model="model" OnValidSubmit="SaveAsync" FormName="event-configuration" class="manage-form settings-form">
+                        <DataAnnotationsValidator /><ValidationSummary />
+                        <label>Event name <InputText @bind-Value="model.EventName" /></label>
+                        <label>Event time zone <InputText @bind-Value="model.TimeZoneId" /></label>
+                        <label>Doors time <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="model.DoorsLocal" /></label>
+                        <label>Start time <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="model.StartsLocal" /></label>
+                        <label>Venue name <InputText @bind-Value="model.VenueName" /></label>
+                        <label>Venue address <InputTextArea @bind-Value="model.VenueAddress" /></label>
+                        <label>Dress code (optional) <InputText @bind-Value="model.DressCode" /></label>
+                        <label>Support email (optional) <InputText @bind-Value="model.SupportEmail" /></label>
+                        <label>Capacity <InputNumber @bind-Value="model.Capacity" /></label>
+                        <label>Accessibility character limit <InputNumber @bind-Value="model.AccessibilityTextLimit" /></label>
+                        <button type="submit">Save event configuration</button>
+                    </EditForm>
+                </Authorized>
+                <NotAuthorized><p>You have read-only access to event configuration.</p></NotAuthorized>
+            </AuthorizeView>
+        </section>
+    }
+</main>
+
+@code {
+    private OrganizerDashboard? dashboard;
+    private readonly EventConfigurationModel model = new();
+    private string? error;
+    protected override async Task OnInitializedAsync() => await RefreshAsync();
+    private async Task SaveAsync()
+    {
+        try { await OrganizerService.SaveEventConfigurationAsync(model.ToInput(), dashboard!.Configuration?.Version); error = null; await RefreshAsync(); }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException) { error = exception.Message; }
+    }
+    private async Task RefreshAsync() { dashboard = await OrganizerService.GetDashboardAsync(); model.Load(dashboard.Configuration); }
+    private sealed class EventConfigurationModel
+    {
+        public int Capacity { get; set; } = 340; public string EventName { get; set; } = string.Empty; public DateTime DoorsLocal { get; set; } = DateTime.Today.AddHours(18); public DateTime StartsLocal { get; set; } = DateTime.Today.AddHours(19); public string VenueName { get; set; } = string.Empty; public string VenueAddress { get; set; } = string.Empty; public string? DressCode { get; set; } public string TimeZoneId { get; set; } = "Europe/Prague"; public string? SupportEmail { get; set; } public int AccessibilityTextLimit { get; set; } = 500;
+        public EventConfigurationInput ToInput() => new(Capacity, EventName, DoorsLocal, StartsLocal, VenueName, VenueAddress, DressCode, TimeZoneId, SupportEmail, AccessibilityTextLimit);
+        public void Load(EventConfiguration? configuration)
+        {
+            if (configuration is null) return; Capacity = configuration.Capacity; EventName = configuration.EventName; var zone = TimeZoneInfo.FindSystemTimeZoneById(configuration.TimeZoneId); if (configuration.DoorsAtUtc != default) DoorsLocal = TimeZoneInfo.ConvertTime(configuration.DoorsAtUtc, zone).DateTime; if (configuration.StartsAtUtc != default) StartsLocal = TimeZoneInfo.ConvertTime(configuration.StartsAtUtc, zone).DateTime; VenueName = configuration.VenueName; VenueAddress = configuration.VenueAddress; DressCode = configuration.DressCode; TimeZoneId = configuration.TimeZoneId; SupportEmail = configuration.SupportEmail; AccessibilityTextLimit = configuration.AccessibilityTextLimit;
+        }
+    }
+}
