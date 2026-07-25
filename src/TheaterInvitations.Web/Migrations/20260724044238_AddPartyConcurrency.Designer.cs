@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TheaterInvitations.Web.Data;
@@ -11,9 +12,11 @@ using TheaterInvitations.Web.Data;
 namespace TheaterInvitations.Web.Migrations
 {
     [DbContext(typeof(InvitationDbContext))]
-    partial class InvitationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260724044238_AddPartyConcurrency")]
+    partial class AddPartyConcurrency
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -118,18 +121,9 @@ namespace TheaterInvitations.Web.Migrations
                     b.Property<Guid?>("PartyId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("PreviousStatus")
-                        .HasColumnType("integer");
-
                     b.Property<string>("ReasonCategory")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
-
-                    b.Property<int?>("RequestedStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("ResultingStatus")
-                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 

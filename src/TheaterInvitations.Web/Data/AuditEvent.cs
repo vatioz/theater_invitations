@@ -1,3 +1,5 @@
+using TheaterInvitations.Domain;
+
 namespace TheaterInvitations.Web.Data;
 
 public sealed class AuditEvent
@@ -12,4 +14,7 @@ public sealed class AuditEvent
     public Guid? BatchId { get; init; }
     public string CorrelationId { get; init; } = string.Empty;
     public string? ReasonCategory { get; init; }
+    public InvitationStatus? PreviousStatus { get; init; }
+    public InvitationStatus? RequestedStatus { get; init; }
+    public InvitationStatus? ResultingStatus { get; init; }
 }

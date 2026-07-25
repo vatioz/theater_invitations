@@ -5,5 +5,6 @@ public enum RsvpResult
     Applied,
     Idempotent,
     Locked,
-    Expired
+    Expired,
+    CapacityExceeded
 }
