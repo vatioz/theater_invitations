@@ -80,50 +80,58 @@
                 </InputSelect>
                 <button type="submit">Filter</button>
             </EditForm>
-            <table>
-                <thead><tr><th>Name</th><th>Email</th><th>Seats</th><th>Status</th><th>Batch</th><th></th></tr></thead>
-                <tbody>
-                    @foreach (var party in dashboard.Parties)
-                    {
-                        <tr><td>@party.Name</td><td>@party.Email</td><td>@party.AllocatedSeats</td><td>@party.Status</td><td>@party.BatchName</td><td><AuthorizeView Roles="Operator,ElevatedOperator"><Authorized><button @onclick="(() => SelectParty(party))">Manage</button></Authorized></AuthorizeView></td></tr>
-                    }
-                </tbody>
-            </table>
-            @if (dashboard.PageCount > 1)
-            {
-                <p>Page @filters.Page of @dashboard.PageCount. <button disabled="@(filters.Page <= 1)" @onclick="PreviousPageAsync">Previous</button> <button disabled="@(filters.Page >= dashboard.PageCount)" @onclick="NextPageAsync">Next</button></p>
-            }
+            <div class="party-grid-wrap">
+            <QuickGrid TGridItem="OrganizerParty" @ref="partyGrid" ItemsProvider="ProvideParties" Pagination="pagination" Class="party-grid">
+                <PropertyColumn Property="party => party.Name" Title="Name" Sortable="true" IsDefaultSortColumn="true" />
+                <PropertyColumn Property="party => party.Email" Title="Email" Sortable="true" />
+                <PropertyColumn Property="party => party.Company" Title="Company" Sortable="true" />
+                <PropertyColumn Property="party => party.AllocatedSeats" Title="Seats" Sortable="true" />
+                <PropertyColumn Property="party => party.Status" Title="Status" Sortable="true" />
+                <PropertyColumn Property="party => party.BatchName" Title="Batch" Sortable="true" />
+                <TemplateColumn Context="party">
+                    <AuthorizeView Roles="Operator,ElevatedOperator"><Authorized><button @onclick="(() => SelectParty(party))">Manage</button></Authorized></AuthorizeView>
+                </TemplateColumn>
+            </QuickGrid>
+            </div>
+            <Paginator State="pagination" />
         </section>
 
         @if (selectedParty is not null)
         {
-            <section class="rsvp-card">
-                <h2>Manage @selectedParty.Name</h2>
+            <section class="rsvp-card manage-party">
+                <div class="manage-heading">
+                    <div><p class="eyebrow">Party administration</p><h2>Manage @selectedParty.Name</h2></div>
+                    <button type="button" class="button-secondary" @onclick="CloseManage">Close</button>
+                </div>
                 @if (!string.IsNullOrWhiteSpace(actionError)) { <p class="validation-message">@actionError</p> }
+                <div class="manage-actions">
                 <AuthorizeView Roles="Operator,ElevatedOperator" Context="operatorAuth">
                     <Authorized>
-                        <EditForm Model="correction" OnValidSubmit="CorrectAsync" FormName="party-correction">
+                        <EditForm Model="correction" OnValidSubmit="CorrectAsync" FormName="party-correction" class="manage-form">
                             <h3>Correct details</h3>
+                            <p>Update the party's contact information or seat allocation.</p>
                             <DataAnnotationsValidator />
                             <ValidationSummary />
                             <label>Name <InputText @bind-Value="correction.Name" /> <ValidationMessage For="@(() => correction.Name)" /></label>
                             <label>Email <InputText @bind-Value="correction.Email" /> <ValidationMessage For="@(() => correction.Email)" /></label>
                             <label>Company <InputText @bind-Value="correction.Company" /></label>
                             <label>Allocated seats <InputNumber @bind-Value="correction.Seats" /> <ValidationMessage For="@(() => correction.Seats)" /></label>
-                            <button type="submit">Save correction</button> <button type="button" @onclick="CloseManage">Cancel</button>
+                            <div class="form-actions"><button type="submit">Save correction</button> <button type="button" class="button-secondary" @onclick="CloseManage">Cancel</button></div>
                         </EditForm>
                     </Authorized>
                 </AuthorizeView>
                 <AuthorizeView Roles="ElevatedOperator" Context="elevatedAuth">
                     <Authorized>
-                        <EditForm Model="overrideModel" OnValidSubmit="OverrideAsync" FormName="party-override">
+                        <EditForm Model="overrideModel" OnValidSubmit="OverrideAsync" FormName="party-override" class="manage-form manage-form-warning">
                             <h3>Override status</h3>
+                            <p>Apply an exceptional status change. A reason is required for the audit trail.</p>
                             <label>Status <InputSelect @bind-Value="overrideModel.Status">@foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }</InputSelect></label>
                             <label>Reason <InputText @bind-Value="overrideModel.Reason" /></label>
-                            <button type="submit">Apply override</button> <button type="button" @onclick="CloseManage">Cancel</button>
+                            <div class="form-actions"><button type="submit">Apply override</button> <button type="button" class="button-secondary" @onclick="CloseManage">Cancel</button></div>
                         </EditForm>
                     </Authorized>
                 </AuthorizeView>
+                </div>
             </section>
         }
 
@@ -146,6 +154,8 @@
     private OrganizerDashboard? dashboard;
     private ImportPreview? preview;
     private readonly PartyFilters filters = new();
+    private readonly PaginationState pagination = new() { ItemsPerPage = 25 };
+    private QuickGrid<OrganizerParty>? partyGrid;
     private OrganizerParty? selectedParty;
     private readonly CorrectionModel correction = new();
     private readonly OverrideModel overrideModel = new();
@@ -169,7 +179,7 @@
         {
             await OrganizerService.CommitImportAsync(preview, "Imported batch");
             preview = null;
-            dashboard = await OrganizerService.GetDashboardAsync();
+            await RefreshDashboardAsync();
         }
     }
 
@@ -184,10 +194,20 @@
         }
     }
 
-    private async Task ApplyFiltersAsync() { filters.Page = 1; await RefreshDashboardAsync(); }
-    private async Task PreviousPageAsync() { filters.Page--; await RefreshDashboardAsync(); }
-    private async Task NextPageAsync() { filters.Page++; await RefreshDashboardAsync(); }
-    private async Task RefreshDashboardAsync() => dashboard = await OrganizerService.GetDashboardAsync(new PartyQuery(filters.Search, filters.Status, null, filters.Page));
+    private async Task ApplyFiltersAsync()
+    {
+        await pagination.SetCurrentPageIndexAsync(0);
+        if (partyGrid is not null) await partyGrid.RefreshDataAsync();
+    }
+
+    private async Task RefreshDashboardAsync()
+    {
+        dashboard = await OrganizerService.GetDashboardAsync();
+        if (partyGrid is not null) await partyGrid.RefreshDataAsync();
+    }
+
+    private ValueTask<GridItemsProviderResult<OrganizerParty>> ProvideParties(GridItemsProviderRequest<OrganizerParty> request) =>
+        OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status);
 
     private void SelectParty(OrganizerParty party)
     {
@@ -229,7 +249,7 @@
         }
     }
 
-    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } public int Page { get; set; } = 1; }
+    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } }
     private sealed class CorrectionModel
     {
         [Required] public string Name { get; set; } = string.Empty;

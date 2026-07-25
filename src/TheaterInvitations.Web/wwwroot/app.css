@@ -62,3 +62,37 @@ button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a744
 table { width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size: .9rem; }
 th, td { padding: .65rem; border-bottom: 1px solid #d8d1c4; text-align: left; }
 th { color: #58656a; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; }
+
+.party-grid-wrap { margin-top: 1rem; overflow-x: auto; }
+.party-grid { min-width: 58rem; font-family: Arial, sans-serif; font-size: .9rem; }
+.party-grid > thead > tr > th { padding: .65rem; background: #ede7dc; color: #35434a; border-bottom: 2px solid #a74420; }
+.party-grid .col-title { width: 100%; padding: 0; color: inherit; font-family: Arial, sans-serif; font-size: .75rem; letter-spacing: .05em; text-align: left; text-transform: uppercase; }
+.party-grid button.col-title:hover { background: #ded6c8; }
+.party-grid > tbody > tr > td { padding: .65rem; border-bottom: 1px solid #d8d1c4; }
+.party-grid > tbody > tr:hover > td { background: #f7f2e9; }
+.party-grid > tbody > tr:has(> td.grid-cell-placeholder),
+.party-grid > tbody > tr:has(> td:first-child:empty) { display: none; }
+.party-grid td:last-child { width: 1%; white-space: nowrap; }
+.party-grid td:last-child button { padding: .5rem .8rem; }
+.organizer-page .paginator { font-family: Arial, sans-serif; }
+
+.manage-party { max-width: none; }
+.manage-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+.manage-heading h2 { margin: .2rem 0 0; }
+.manage-heading .eyebrow { margin: 0; }
+.manage-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+.manage-form { display: grid; align-content: start; gap: .85rem; padding: 1.25rem; border: 1px solid #d8d1c4; background: #faf7f0; }
+.manage-form-warning { border-top: 4px solid #a74420; }
+.manage-form h3, .manage-form p { margin: 0; }
+.manage-form > p { color: #58656a; font-family: Arial, sans-serif; font-size: .9rem; line-height: 1.45; }
+.manage-form label { display: grid; gap: .35rem; font-size: .85rem; font-weight: bold; }
+.manage-form input, .manage-form select { width: 100%; min-height: 2.5rem; padding: .45rem .55rem; border: 1px solid #a9a294; background: white; color: #1e2930; font: normal 1rem Arial, sans-serif; }
+.manage-form input:focus, .manage-form select:focus { outline: 3px solid rgb(167 68 32 / 22%); border-color: #a74420; }
+.form-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: .35rem; }
+.button-secondary { border: 1px solid #8d8578; background: transparent; color: #35434a; }
+.button-secondary:hover { background: #ede7dc; }
+
+@media (max-width: 760px) {
+    .manage-actions { grid-template-columns: 1fr; }
+    .manage-heading { align-items: stretch; flex-direction: column; }
+}

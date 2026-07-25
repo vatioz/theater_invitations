@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Components.QuickGrid;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
 
@@ -8,6 +9,31 @@ namespace TheaterInvitations.Web.Services;
 
 public sealed class OrganizerService(InvitationDbContext db, IClock clock)
 {
+    public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
+    {
+        var query = from party in db.InvitationParties.AsNoTracking()
+                    join batch in db.InvitationBatches.AsNoTracking() on party.BatchId equals batch.Id
+                    select new { party, batch };
+        if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.party.PrimaryGuestName.Contains(search) || x.party.Email.Contains(search) || (x.party.Company != null && x.party.Company.Contains(search)));
+        if (status is not null) query = query.Where(x => x.party.Status == status);
+        if (batchId is not null) query = query.Where(x => x.batch.Id == batchId);
+
+        var projected = query.Select(x => new OrganizerParty
+        {
+            Id = x.party.Id,
+            Name = x.party.PrimaryGuestName,
+            Email = x.party.Email,
+            Company = x.party.Company,
+            AllocatedSeats = x.party.AllocatedSeats,
+            Status = x.party.Status,
+            BatchName = x.batch.Name
+        });
+        var totalCount = await projected.CountAsync(request.CancellationToken);
+        var sorted = request.SortByColumn is null ? projected.OrderBy(x => x.Name) : request.ApplySorting(projected);
+        var items = await sorted.Skip(request.StartIndex).Take(request.Count ?? 25).ToArrayAsync(request.CancellationToken);
+        return GridItemsProviderResult.From(items, totalCount);
+    }
+
     public async Task<OrganizerDashboard> GetDashboardAsync(PartyQuery? query = null, CancellationToken cancellationToken = default)
     {
         query ??= new PartyQuery();
@@ -18,7 +44,16 @@ public sealed class OrganizerService(InvitationDbContext db, IClock clock)
         if (query.Status is not null) partyQuery = partyQuery.Where(x => x.party.Status == query.Status);
         if (query.BatchId is not null) partyQuery = partyQuery.Where(x => x.batch.Id == query.BatchId);
         var totalParties = await partyQuery.CountAsync(cancellationToken);
-        var parties = await partyQuery.OrderBy(x => x.party.PrimaryGuestName).Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).Select(x => new OrganizerParty(x.party.Id, x.party.PrimaryGuestName, x.party.Email, x.party.Company, x.party.AllocatedSeats, x.party.Status, x.batch.Name)).ToListAsync(cancellationToken);
+        var parties = await partyQuery.OrderBy(x => x.party.PrimaryGuestName).Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).Select(x => new OrganizerParty
+        {
+            Id = x.party.Id,
+            Name = x.party.PrimaryGuestName,
+            Email = x.party.Email,
+            Company = x.party.Company,
+            AllocatedSeats = x.party.AllocatedSeats,
+            Status = x.party.Status,
+            BatchName = x.batch.Name
+        }).ToListAsync(cancellationToken);
         var reserved = await ReservedSeatsAsync(now, cancellationToken);
         var audits = await db.AuditEvents.OrderByDescending(x => x.OccurredAtUtc).Take(20).Select(x => new OrganizerAudit(x.OccurredAtUtc, x.EventType, x.Outcome, x.ActorIdentifier ?? x.ActorCategory)).ToListAsync(cancellationToken);
         var statusCounts = await db.InvitationParties.GroupBy(x => x.Status).Select(x => new { Status = x.Key, Seats = x.Sum(p => p.AllocatedSeats) }).ToListAsync(cancellationToken);
@@ -145,6 +180,15 @@ public sealed class OrganizerService(InvitationDbContext db, IClock clock)
 public sealed record ImportRow(string Name, string Email, string? Company, int AllocatedSeats);
 public sealed record ImportPreview(IReadOnlyList<ImportRow> ValidRows, IReadOnlyList<string> Errors) { public int TotalSeats => ValidRows.Sum(x => x.AllocatedSeats); public bool IsValid => Errors.Count == 0; }
 public sealed record PartyQuery(string? Search = null, InvitationStatus? Status = null, Guid? BatchId = null, int Page = 1, int PageSize = 25);
-public sealed record OrganizerParty(Guid Id, string Name, string Email, string? Company, int AllocatedSeats, InvitationStatus Status, string BatchName);
+public sealed class OrganizerParty
+{
+    public Guid Id { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string Email { get; init; } = string.Empty;
+    public string? Company { get; init; }
+    public int AllocatedSeats { get; init; }
+    public InvitationStatus Status { get; init; }
+    public string BatchName { get; init; } = string.Empty;
+}
 public sealed record OrganizerAudit(DateTimeOffset OccurredAtUtc, string EventType, string Outcome, string Actor);
 public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits, PartyQuery Query, int PageCount);
