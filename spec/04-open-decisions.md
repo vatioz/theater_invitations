@@ -18,6 +18,12 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 | OD-10 | Is CSV import strictly all-or-nothing? | Decided | Product owner | Yes; correct invalid rows and preview again. | Phase 3 |
 | OD-11 | How should duplicate emails across batches be handled? | Decided | Requestor | Block by default and require an explicit correction or documented exception. | Phase 3 |
 | OD-12 | Which organizer roles may import, send, override, lock, and export? | Decided | System owner | Separate viewer and operator roles; reserve overrides and lock for elevated operators. | Phase 3 |
+| OD-30 | May persisted draft import data exist before commit? | Decided | Requestor | Persist protected draft rows for review; do not create live parties or reserve capacity until commit. | Batch management |
+| OD-31 | Are batch display names unique? | Decided | Requestor | Require case-insensitive uniqueness among non-deleted batches. | Batch management |
+| OD-32 | Who may administer committed batch deadlines and regenerate RSVP tokens? | Decided | Requestor | Restrict both to `ElevatedOperator`; require reason and confirmation. | Batch management |
+| OD-33 | What happens when a deadline is extended after system expiry? | Decided | Requestor | Reopen only unanswered parties expired by the prior system deadline; organizer-expired parties remain terminal. | Batch management |
+| OD-34 | How are raw RSVP tokens retained for delayed email delivery? | Decided | Requestor | Store only a protected delivery envelope, encrypted with managed key material and accessible to the send worker. | Batch management and Phase 4 |
+| OD-35 | What draft-source retention applies? | Decided | Requestor | Retain normalized draft rows and source digest only; do not retain raw CSV. Delete drafts after the approved operational window. | Batch management |
 
 ## Email
 

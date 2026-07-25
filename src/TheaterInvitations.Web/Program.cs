@@ -32,6 +32,8 @@ builder.Services.AddScoped<RsvpInvitationService>();
 builder.Services.AddScoped<OrganizerService>();
 builder.Services.AddScoped<IOrganizerAuthorization, OrganizerAuthorization>();
 builder.Services.AddSingleton<ITransactionRetry, TransactionRetry>();
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<IDeliveryEnvelopeProtector, DeliveryEnvelopeProtector>();
 
 var app = builder.Build();
 

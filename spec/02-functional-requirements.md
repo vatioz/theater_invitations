@@ -83,7 +83,7 @@ remaining capacity = 50
 - **FR-070** All organizer pages and actions must require an authenticated and authorized identity.
 - **FR-071** CSV import must accept the canonical fields defined in the integration specification.
 - **FR-072** The parser must support standards-compliant quoting, embedded delimiters, Unicode, and configured file-size limits.
-- **FR-073** No imported data may be persisted until the organizer confirms a valid preview.
+- **FR-073** No live invitation party may be persisted until the organizer confirms a valid preview. Protected draft import data may be persisted for review under the approved retention policy.
 - **FR-074** The party list must support search, status and batch filters, sorting, and pagination.
 - **FR-075** Search must cover at least invitee name, email, and company.
 - **FR-076** The dashboard must show party counts and allocated-seat totals by effective status.

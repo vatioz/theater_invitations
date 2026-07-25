@@ -8,6 +8,9 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
     public DbSet<EventConfiguration> EventConfigurations => Set<EventConfiguration>();
     public DbSet<InvitationBatch> InvitationBatches => Set<InvitationBatch>();
     public DbSet<InvitationParty> InvitationParties => Set<InvitationParty>();
+    public DbSet<InvitationDraftRow> InvitationDraftRows => Set<InvitationDraftRow>();
+    public DbSet<RsvpToken> RsvpTokens => Set<RsvpToken>();
+    public DbSet<ProtectedDeliveryEnvelope> ProtectedDeliveryEnvelopes => Set<ProtectedDeliveryEnvelope>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -27,6 +30,11 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
         modelBuilder.Entity<InvitationBatch>(entity =>
         {
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.CreatedBy).HasMaxLength(200);
+            entity.Property(x => x.ModifiedBy).HasMaxLength(200);
+            entity.Property(x => x.CommittedBy).HasMaxLength(200);
+            entity.Property(x => x.SourceDigest).HasMaxLength(128);
+            entity.Property(x => x.ValidationIssue).HasMaxLength(2000);
             entity.Property(x => x.Version).IsRowVersion();
         });
 
@@ -40,6 +48,35 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.Version).IsRowVersion();
             entity.HasIndex(x => x.TokenHash).IsUnique();
             entity.ToTable(table => table.HasCheckConstraint("CK_InvitationParties_AllocatedSeats", "\"AllocatedSeats\" > 0"));
+        });
+
+        modelBuilder.Entity<InvitationDraftRow>(entity =>
+        {
+            entity.Property(x => x.PrimaryGuestName).HasMaxLength(200);
+            entity.Property(x => x.Email).HasMaxLength(320);
+            entity.Property(x => x.Company).HasMaxLength(200);
+            entity.Property(x => x.ValidationIssue).HasMaxLength(500);
+            entity.HasIndex(x => new { x.BatchId, x.SourceRowNumber }).IsUnique();
+            entity.HasOne<InvitationBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RsvpToken>(entity =>
+        {
+            entity.Property(x => x.Hash).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RevocationReasonCategory).HasMaxLength(100);
+            entity.Property(x => x.Version).IsRowVersion();
+            entity.HasIndex(x => x.Hash).IsUnique();
+            entity.HasIndex(x => x.PartyId).HasFilter("\"RevokedAtUtc\" IS NULL").IsUnique();
+            entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProtectedDeliveryEnvelope>(entity =>
+        {
+            entity.Property(x => x.ProtectedToken).IsRequired();
+            entity.Property(x => x.ProtectionPurpose).HasMaxLength(200).IsRequired();
+            entity.HasIndex(x => x.TokenId).IsUnique();
+            entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<RsvpToken>().WithMany().HasForeignKey(x => x.TokenId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AuditEvent>(entity =>

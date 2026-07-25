@@ -294,11 +294,109 @@ public sealed class OrganizerServiceTests
         Assert.Contains(audits, x => x.EventType == "SupportEmailChanged" && x.Outcome == "Accepted");
     }
 
+    [Fact]
+    public async Task Saving_a_valid_draft_persists_rows_without_creating_live_parties()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        var draft = await service.SaveDraftAsync(new BatchDraftInput("First wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,2");
+
+        Assert.Equal(InvitationBatchState.Prepared, draft.State);
+        Assert.Single(draft.Rows);
+        Assert.Empty(db.InvitationParties);
+        Assert.Single(db.InvitationDraftRows);
+        Assert.Equal("BatchDraftSaved", (await db.AuditEvents.SingleAsync()).EventType);
+    }
+
+    [Fact]
+    public async Task Operator_can_delete_an_uncommitted_draft_and_its_rows()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+        var draft = await service.SaveDraftAsync(new BatchDraftInput("Disposable wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,1");
+
+        await service.DeleteDraftAsync(draft.Id, draft.Version);
+
+        Assert.Empty(db.InvitationBatches);
+        Assert.Empty(db.InvitationDraftRows);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchDraftDeleted" && x.Outcome == "Accepted");
+    }
+
+    [Fact]
+    public async Task Committing_a_prepared_draft_creates_party_token_and_delivery_envelope_together()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+        var draft = await service.SaveDraftAsync(new BatchDraftInput("First wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,2");
+
+        await service.CommitDraftAsync(draft.Id, draft.Version);
+
+        var batch = await db.InvitationBatches.SingleAsync();
+        Assert.Equal(InvitationBatchState.Committed, batch.State);
+        var party = await db.InvitationParties.SingleAsync();
+        var token = await db.RsvpTokens.SingleAsync();
+        var envelope = await db.ProtectedDeliveryEnvelopes.SingleAsync();
+        Assert.Equal(party.Id, token.PartyId);
+        Assert.Equal(party.TokenHash, token.Hash);
+        Assert.Equal(token.Id, envelope.TokenId);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchCommitted" && x.Outcome == "Accepted");
+    }
+
+    [Fact]
+    public async Task Extending_a_batch_deadline_reopens_only_system_expired_parties()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Expired wave", DeadlineUtc = new DateTimeOffset(2026, 7, 25, 11, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var systemExpired = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "System", Email = "system@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("system") };
+        var overridden = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Override", Email = "override@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("override") };
+        db.AddRange(batch, systemExpired, overridden);
+        await db.SaveChangesAsync();
+        systemExpired.Respond(RsvpResponse.Confirm, null, batch.DeadlineUtc, false, new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
+        overridden.OverrideStatus(InvitationStatus.Expired, DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync();
+
+        await CreateService(db).ChangeBatchDeadlineAsync(batch.Id, batch.Version, new DateTime(2026, 7, 26, 18, 0, 0), "Venue extension");
+
+        db.ChangeTracker.Clear();
+        var reloadedParties = await db.InvitationParties.OrderBy(x => x.Email).ToListAsync();
+        Assert.Equal(InvitationStatus.Expired, reloadedParties[0].Status);
+        Assert.Equal(ExpirationSource.OrganizerOverride, reloadedParties[0].ExpirationSource);
+        Assert.Equal(InvitationStatus.Pending, reloadedParties[1].Status);
+    }
+
+    [Fact]
+    public async Task Regenerating_an_rsvp_token_revokes_the_prior_token_and_prepares_a_replacement()
+    {
+        await using var db = CreateDb();
+        var party = await AddPartyAsync(db);
+        var original = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, IssuedAtUtc = DateTimeOffset.UtcNow };
+        db.RsvpTokens.Add(original);
+        await db.SaveChangesAsync();
+
+        await CreateService(db).RegenerateRsvpTokenAsync(party.Id, "Address correction");
+
+        db.ChangeTracker.Clear();
+        var tokens = await db.RsvpTokens.ToListAsync();
+        Assert.Equal(2, tokens.Count);
+        var revoked = tokens.Single(x => x.Id == original.Id);
+        var replacement = tokens.Single(x => x.Id != original.Id);
+        Assert.NotNull(revoked.RevokedAtUtc);
+        Assert.Null(replacement.RevokedAtUtc);
+        Assert.NotEqual(revoked.Hash, replacement.Hash);
+        Assert.Equal(replacement.Hash, (await db.InvitationParties.SingleAsync()).TokenHash);
+        Assert.Single(await db.ProtectedDeliveryEnvelopes.ToListAsync());
+    }
+
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
-    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
+    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName), new TestEnvelopeProtector());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
@@ -355,5 +453,10 @@ public sealed class OrganizerServiceTests
         public string ApplicationName { get; set; } = "Tests";
         public string ContentRootPath { get; set; } = string.Empty;
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
+
+    private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
+    {
+        public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
     }
 }

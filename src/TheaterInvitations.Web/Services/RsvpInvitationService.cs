@@ -14,10 +14,15 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
         }
 
         var tokenHash = RsvpService.HashToken(token);
+        var tokenRecord = await db.RsvpTokens.AsNoTracking().SingleOrDefaultAsync(x => x.Hash == tokenHash, cancellationToken);
+        if (tokenRecord is not null && tokenRecord.RevokedAtUtc is not null)
+        {
+            return null;
+        }
         var partyInvitation = await (
             from party in db.InvitationParties
             join batch in db.InvitationBatches on party.BatchId equals batch.Id
-            where party.TokenHash == tokenHash
+            where tokenRecord != null ? party.Id == tokenRecord.PartyId : party.TokenHash == tokenHash
             select new
             {
                 party.PrimaryGuestName,

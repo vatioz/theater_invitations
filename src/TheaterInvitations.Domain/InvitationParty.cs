@@ -8,10 +8,11 @@ public sealed class InvitationParty
     public string Email { get; set; } = string.Empty;
     public string? Company { get; set; }
     public int AllocatedSeats { get; set; }
-    public string TokenHash { get; init; } = string.Empty;
+    public string TokenHash { get; set; } = string.Empty;
     public InvitationStatus Status { get; private set; } = InvitationStatus.Pending;
     public string? AccessibilityRequirements { get; private set; }
     public DateTimeOffset? RespondedAtUtc { get; private set; }
+    public ExpirationSource ExpirationSource { get; private set; }
     public uint Version { get; private set; }
 
     public bool IsEffectivelyExpired(DateTimeOffset deadlineUtc, DateTimeOffset nowUtc) =>
@@ -27,6 +28,7 @@ public sealed class InvitationParty
         if (IsEffectivelyExpired(deadlineUtc, nowUtc))
         {
             Status = InvitationStatus.Expired;
+            ExpirationSource = ExpirationSource.SystemDeadline;
             AccessibilityRequirements = null;
             return RsvpResult.Expired;
         }
@@ -45,6 +47,7 @@ public sealed class InvitationParty
         }
 
         Status = requestedStatus;
+        ExpirationSource = ExpirationSource.None;
         AccessibilityRequirements = response == RsvpResponse.Confirm ? accessibilityRequirements?.Trim() : null;
         RespondedAtUtc = nowUtc;
         return RsvpResult.Applied;
@@ -64,7 +67,20 @@ public sealed class InvitationParty
     public void OverrideStatus(InvitationStatus status, DateTimeOffset nowUtc)
     {
         Status = status;
+        ExpirationSource = status == InvitationStatus.Expired ? ExpirationSource.OrganizerOverride : ExpirationSource.None;
         AccessibilityRequirements = status == InvitationStatus.Confirmed ? AccessibilityRequirements : null;
         RespondedAtUtc = nowUtc;
+    }
+
+    public bool ReopenSystemExpiration()
+    {
+        if (Status != InvitationStatus.Expired || ExpirationSource != ExpirationSource.SystemDeadline || RespondedAtUtc is not null)
+        {
+            return false;
+        }
+
+        Status = InvitationStatus.Pending;
+        ExpirationSource = ExpirationSource.None;
+        return true;
     }
 }

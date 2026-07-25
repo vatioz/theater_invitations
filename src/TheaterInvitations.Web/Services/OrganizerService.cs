@@ -10,7 +10,7 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment)
+public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment, IDeliveryEnvelopeProtector envelopeProtector)
 {
     public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
     {
@@ -103,8 +103,165 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     public async Task<IReadOnlyList<OrganizerBatch>> GetBatchesAsync(CancellationToken cancellationToken = default) =>
         await db.InvitationBatches.AsNoTracking()
             .OrderByDescending(x => x.CreatedAtUtc)
-            .Select(x => new OrganizerBatch(x.Id, x.Name))
+            .Select(x => new OrganizerBatch(x.Id, x.Name, x.DeadlineUtc, x.State, x.Version))
             .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<OrganizerDraft>> GetDraftsAsync(CancellationToken cancellationToken = default) =>
+        await db.InvitationBatches.AsNoTracking()
+            .Where(x => x.State != InvitationBatchState.Committed)
+            .OrderByDescending(x => x.ModifiedAtUtc)
+            .Select(x => new OrganizerDraft(x.Id, x.Name, x.DeadlineUtc, x.State, x.Version, x.ValidationIssue))
+            .ToListAsync(cancellationToken);
+
+    public async Task<OrganizerDraftDetail?> GetDraftAsync(Guid batchId, CancellationToken cancellationToken = default)
+    {
+        var batch = await db.InvitationBatches.AsNoTracking().SingleOrDefaultAsync(x => x.Id == batchId, cancellationToken);
+        if (batch is null || batch.State == InvitationBatchState.Committed) return null;
+        var rows = await db.InvitationDraftRows.AsNoTracking().Where(x => x.BatchId == batchId)
+            .OrderBy(x => x.SourceRowNumber)
+            .Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.PrimaryGuestName, x.Email, x.Company, x.AllocatedSeats, x.ValidationIssue))
+            .ToListAsync(cancellationToken);
+        return new OrganizerDraftDetail(batch.Id, batch.Name, batch.DeadlineUtc, batch.State, batch.Version, batch.ValidationIssue, rows);
+    }
+
+    public async Task<OrganizerDraftDetail> SaveDraftAsync(BatchDraftInput input, string csv, Guid? batchId = null, uint? expectedVersion = null, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        var configuration = await db.EventConfigurations.AsNoTracking().SingleAsync(cancellationToken);
+        ValidateBatchInput(input, configuration, clock.UtcNow);
+        var normalizedName = input.Name.Trim();
+        if (await db.InvitationBatches.AnyAsync(x => x.Id != batchId && x.Name.ToUpper() == normalizedName.ToUpper(), cancellationToken)) throw new InvalidOperationException("A batch with this name already exists.");
+        var deadlineUtc = EventConfigurationValidation.ToUtc(input.DeadlineLocal, configuration.TimeZoneId);
+        var parsed = await BuildDraftRowsAsync(csv, cancellationToken);
+        var now = clock.UtcNow;
+
+        await using var operationDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        InvitationBatch batch;
+        if (batchId is null)
+        {
+            batch = new InvitationBatch { Name = normalizedName, DeadlineUtc = deadlineUtc, State = parsed.IsPrepared ? InvitationBatchState.Prepared : InvitationBatchState.Draft, CreatedAtUtc = now, CreatedBy = actor, ModifiedAtUtc = now, ModifiedBy = actor, SourceDigest = HashContent(csv), ValidationIssue = parsed.DocumentIssue };
+            operationDb.InvitationBatches.Add(batch);
+        }
+        else
+        {
+            batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, cancellationToken);
+            if (batch.State == InvitationBatchState.Committed) throw new InvalidOperationException("Committed batches cannot be replaced by a draft.");
+            if (expectedVersion is not null && batch.Version != expectedVersion) throw new StaleDataException("This draft changed after you opened it. The current draft has been loaded.");
+            operationDb.InvitationDraftRows.RemoveRange(operationDb.InvitationDraftRows.Where(x => x.BatchId == batch.Id));
+            batch.Name = normalizedName; batch.DeadlineUtc = deadlineUtc; batch.State = parsed.IsPrepared ? InvitationBatchState.Prepared : InvitationBatchState.Draft; batch.ModifiedAtUtc = now; batch.ModifiedBy = actor; batch.SourceDigest = HashContent(csv); batch.ValidationIssue = parsed.DocumentIssue;
+        }
+
+        foreach (var row in parsed.Rows) operationDb.InvitationDraftRows.Add(new InvitationDraftRow { BatchId = batch.Id, SourceRowNumber = row.SourceRowNumber, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, ValidationIssue = row.Issue });
+        AddAudit(operationDb, "BatchDraftSaved", "Accepted", batch.Id, null, actor, null);
+        await operationDb.SaveChangesAsync(cancellationToken);
+        return new OrganizerDraftDetail(batch.Id, batch.Name, batch.DeadlineUtc, batch.State, batch.Version, batch.ValidationIssue, parsed.Rows.Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.Name, x.Email, x.Company, x.AllocatedSeats, x.Issue)).ToList());
+    }
+
+    public async Task DeleteDraftAsync(Guid batchId, uint expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        await using var operationDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, cancellationToken);
+        if (batch.State == InvitationBatchState.Committed) throw new InvalidOperationException("Committed batches cannot be deleted as drafts.");
+        if (batch.Version != expectedVersion) throw new StaleDataException("This draft changed after you opened it. The current draft has been loaded.");
+        operationDb.InvitationDraftRows.RemoveRange(operationDb.InvitationDraftRows.Where(x => x.BatchId == batchId));
+        operationDb.InvitationBatches.Remove(batch);
+        AddAudit(operationDb, "BatchDraftDeleted", "Accepted", batchId, null, actor, null);
+        await operationDb.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task CommitDraftAsync(Guid batchId, uint expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        await retry.ExecuteAsync(async token =>
+        {
+            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
+            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
+            var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, token);
+            if (batch.Version != expectedVersion) throw new StaleDataException("This draft changed after you opened it. The current draft has been loaded.");
+            if (batch.State != InvitationBatchState.Prepared || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Only a valid future-dated prepared draft may be committed.");
+            var rows = await operationDb.InvitationDraftRows.Where(x => x.BatchId == batchId).OrderBy(x => x.SourceRowNumber).ToListAsync(token);
+            if (rows.Count == 0 || rows.Any(x => x.ValidationIssue is not null || x.PrimaryGuestName is null || x.Email is null || x.AllocatedSeats is null)) throw new InvalidOperationException("Only a fully valid draft may be committed.");
+            var draftEmails = rows.Select(x => x.Email!).ToList();
+            if (draftEmails.Distinct(StringComparer.OrdinalIgnoreCase).Count() != draftEmails.Count || await operationDb.InvitationParties.AnyAsync(x => draftEmails.Contains(x.Email), token)) throw new InvalidOperationException("A draft email is already invited or duplicated.");
+            var configuration = await operationDb.EventConfigurations.SingleAsync(token);
+            var totalSeats = rows.Sum(x => x.AllocatedSeats!.Value);
+            if (await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + totalSeats > configuration.Capacity) throw new InvalidOperationException("The draft would exceed remaining capacity.");
+
+            foreach (var row in rows)
+            {
+                var rawToken = CreateRawToken();
+                var hash = RsvpService.HashToken(rawToken);
+                var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.PrimaryGuestName!, Email = row.Email!, Company = row.Company, AllocatedSeats = row.AllocatedSeats!.Value, TokenHash = hash };
+                operationDb.InvitationParties.Add(party);
+                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+                operationDb.RsvpTokens.Add(rsvpToken);
+                operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = rsvpToken.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
+            }
+
+            batch.State = InvitationBatchState.Committed; batch.CommittedAtUtc = clock.UtcNow; batch.CommittedBy = actor; batch.ModifiedAtUtc = clock.UtcNow; batch.ModifiedBy = actor;
+            AddAudit(operationDb, "BatchCommitted", "Accepted", batch.Id, null, actor, null);
+            await operationDb.SaveChangesAsync(token);
+            if (transaction is not null) await transaction.CommitAsync(token);
+            return true;
+        }, cancellationToken);
+    }
+
+    public async Task ChangeBatchDeadlineAsync(Guid batchId, uint expectedVersion, DateTime deadlineLocal, string reason, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        await retry.ExecuteAsync(async token =>
+        {
+            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
+            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
+            var configuration = await operationDb.EventConfigurations.SingleAsync(token);
+            var requestedDeadlineUtc = EventConfigurationValidation.ToUtc(deadlineLocal, configuration.TimeZoneId);
+            if (requestedDeadlineUtc <= clock.UtcNow) throw new ArgumentException("The deadline must be in the future.", nameof(deadlineLocal));
+            var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, token);
+            if (batch.Version != expectedVersion) throw new StaleDataException("This batch changed after you opened it. The current batch has been loaded.");
+            if (batch.State != InvitationBatchState.Committed) throw new InvalidOperationException("Only committed batches have an operational deadline.");
+            var parties = await operationDb.InvitationParties.Where(x => x.BatchId == batchId).ToListAsync(token);
+            var reopens = requestedDeadlineUtc > clock.UtcNow ? parties.Count(x => x.Status == InvitationStatus.Expired && x.ExpirationSource == ExpirationSource.SystemDeadline && x.RespondedAtUtc is null) : 0;
+            var batchReserved = parties.Where(x => x.Status == InvitationStatus.Confirmed || x.Status == InvitationStatus.Pending || (reopens > 0 && x.Status == InvitationStatus.Expired && x.ExpirationSource == ExpirationSource.SystemDeadline && x.RespondedAtUtc is null)).Sum(x => x.AllocatedSeats);
+            var reservedOtherBatches = await (from party in operationDb.InvitationParties join otherBatch in operationDb.InvitationBatches on party.BatchId equals otherBatch.Id where party.BatchId != batchId && (party.Status == InvitationStatus.Confirmed || (party.Status == InvitationStatus.Pending && otherBatch.DeadlineUtc > clock.UtcNow)) select party.AllocatedSeats).SumAsync(token);
+            if (reservedOtherBatches + batchReserved > configuration.Capacity) throw new InvalidOperationException("The deadline extension would exceed remaining capacity.");
+            batch.DeadlineUtc = requestedDeadlineUtc; batch.ModifiedAtUtc = clock.UtcNow; batch.ModifiedBy = actor;
+            foreach (var party in parties) party.ReopenSystemExpiration();
+            AddAudit(operationDb, "BatchDeadlineChanged", "Accepted", batch.Id, null, actor, reason);
+            await operationDb.SaveChangesAsync(token);
+            if (transaction is not null) await transaction.CommitAsync(token);
+            return true;
+        }, cancellationToken);
+    }
+
+    public async Task RegenerateRsvpTokenAsync(Guid partyId, string reason, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        await retry.ExecuteAsync(async token =>
+        {
+            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
+            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
+            var party = await operationDb.InvitationParties.SingleAsync(x => x.Id == partyId, token);
+            var activeToken = await operationDb.RsvpTokens.SingleOrDefaultAsync(x => x.PartyId == partyId && x.RevokedAtUtc == null, token);
+            if (activeToken is not null)
+            {
+                activeToken.RevokedAtUtc = clock.UtcNow;
+                activeToken.RevocationReasonCategory = "replaced";
+            }
+            var rawToken = CreateRawToken();
+            var hash = RsvpService.HashToken(rawToken);
+            party.TokenHash = hash;
+            var replacement = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+            operationDb.RsvpTokens.Add(replacement);
+            operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = replacement.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
+            AddAudit(operationDb, "RsvpTokenRegenerated", "Accepted", null, party.Id, actor, reason);
+            await operationDb.SaveChangesAsync(token);
+            if (transaction is not null) await transaction.CommitAsync(token);
+            return true;
+        }, cancellationToken);
+    }
 
     public async Task SaveEventConfigurationAsync(EventConfigurationInput input, uint? expectedVersion, CancellationToken cancellationToken = default)
     {
@@ -245,9 +402,18 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
             var configuration = await operationDb.EventConfigurations.SingleAsync(token);
             if (await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + preview.TotalSeats > configuration.Capacity) throw new InvalidOperationException("The import would exceed remaining capacity.");
-            var batch = new InvitationBatch { Name = batchName, DeadlineUtc = clock.UtcNow.AddDays(14), CreatedAtUtc = clock.UtcNow };
+            var batch = new InvitationBatch { Name = batchName, DeadlineUtc = clock.UtcNow.AddDays(14), State = InvitationBatchState.Committed, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, ModifiedAtUtc = clock.UtcNow, ModifiedBy = actor, CommittedAtUtc = clock.UtcNow, CommittedBy = actor };
             operationDb.InvitationBatches.Add(batch);
-            foreach (var row in preview.ValidRows) operationDb.InvitationParties.Add(new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, TokenHash = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)) });
+            foreach (var row in preview.ValidRows)
+            {
+                var rawToken = CreateRawToken();
+                var hash = RsvpService.HashToken(rawToken);
+                var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, TokenHash = hash };
+                operationDb.InvitationParties.Add(party);
+                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+                operationDb.RsvpTokens.Add(rsvpToken);
+                operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = rsvpToken.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
+            }
             AddAudit(operationDb, "BatchImported", "Accepted", batch.Id, null, actor, null);
             await operationDb.SaveChangesAsync(token);
             if (transaction is not null) await transaction.CommitAsync(token);
@@ -354,12 +520,58 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
 
         return new CsvParseResult(rows, Array.Empty<string>());
     }
+
+    private async Task<DraftParseResult> BuildDraftRowsAsync(string csv, CancellationToken cancellationToken)
+    {
+        var parsed = ParseCsv(csv);
+        if (parsed.Errors.Count > 0) return new DraftParseResult(Array.Empty<DraftRowInput>(), parsed.Errors.Single());
+        if (parsed.Rows.Count == 0 || !parsed.Rows[0].SequenceEqual(new[] { "primary_guest_name", "email", "company", "allocated_seats" }, StringComparer.Ordinal)) return new DraftParseResult(Array.Empty<DraftRowInput>(), "CSV must use the canonical header row.");
+        var existing = await db.InvitationParties.Select(x => x.Email.ToUpper()).ToListAsync(cancellationToken);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<DraftRowInput>();
+        for (var index = 1; index < parsed.Rows.Count; index++)
+        {
+            var fields = parsed.Rows[index];
+            string? issue = null;
+            string? name = null;
+            string? email = null;
+            string? company = null;
+            int? seats = null;
+            if (fields.Length != 4) issue = "Row must contain exactly 4 columns.";
+            else
+            {
+                name = string.IsNullOrWhiteSpace(fields[0]) ? null : fields[0].Trim();
+                if (name is null) issue = "primary_guest_name is required.";
+                try { email = PartyEmailValidation.Normalize(fields[1]); }
+                catch (ArgumentException) { issue ??= "email must be a valid address."; }
+                company = string.IsNullOrWhiteSpace(fields[2]) ? null : fields[2].Trim();
+                if (!int.TryParse(fields[3], CultureInfo.InvariantCulture, out var parsedSeats) || parsedSeats <= 0) issue ??= "allocated_seats must be a positive integer.";
+                else seats = parsedSeats;
+                if (email is not null && (!seen.Add(email) || existing.Contains(email.ToUpperInvariant()))) issue ??= "email is already invited or duplicated in this upload.";
+            }
+            rows.Add(new DraftRowInput(index + 1, name, email, company, seats, issue));
+        }
+        return new DraftParseResult(rows, null);
+    }
+
+    private static void ValidateBatchInput(BatchDraftInput input, EventConfiguration configuration, DateTimeOffset nowUtc)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(input.Name);
+        if (input.Name.Trim().Length > 200) throw new ArgumentException("Batch name must be 200 characters or fewer.", nameof(input));
+        var deadlineUtc = EventConfigurationValidation.ToUtc(input.DeadlineLocal, configuration.TimeZoneId);
+        if (deadlineUtc <= nowUtc) throw new ArgumentException("The deadline must be in the future.", nameof(input));
+    }
+
+    private static string HashContent(string csv) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(csv)));
+    private static string CreateRawToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
 public sealed record ImportRow(string Name, string Email, string? Company, int AllocatedSeats);
 public sealed record ImportPreview(IReadOnlyList<ImportRow> ValidRows, IReadOnlyList<string> Errors) { public int TotalSeats => ValidRows.Sum(x => x.AllocatedSeats); public bool IsValid => Errors.Count == 0; }
-public sealed record OrganizerBatch(Guid Id, string Name);
+public sealed record OrganizerBatch(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version);
 internal sealed record CsvParseResult(IReadOnlyList<string[]> Rows, IReadOnlyList<string> Errors);
+internal sealed record DraftRowInput(int SourceRowNumber, string? Name, string? Email, string? Company, int? AllocatedSeats, string? Issue);
+internal sealed record DraftParseResult(IReadOnlyList<DraftRowInput> Rows, string? DocumentIssue) { public bool IsPrepared => DocumentIssue is null && Rows.Count > 0 && Rows.All(x => x.Issue is null); }
 public sealed record PartyQuery(string? Search = null, InvitationStatus? Status = null, Guid? BatchId = null, int Page = 1, int PageSize = 25);
 public sealed class OrganizerParty
 {
@@ -381,3 +593,7 @@ public sealed class OrganizerAudit
 }
 public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, int ActivePendingSeats, int RemainingCapacity, int PartyCount, IReadOnlyList<OrganizerParty> Parties, IReadOnlyList<OrganizerAudit> Audits, PartyQuery Query, int PageCount, EventConfiguration? Configuration);
 public sealed record EventConfigurationInput(int Capacity, string EventName, DateTime DoorsLocal, DateTime StartsLocal, string VenueName, string VenueAddress, string? DressCode, string TimeZoneId, string? SupportEmail, int AccessibilityTextLimit);
+public sealed record BatchDraftInput(string Name, DateTime DeadlineLocal);
+public sealed record OrganizerDraft(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version, string? ValidationIssue);
+public sealed record OrganizerDraftRow(int SourceRowNumber, string? Name, string? Email, string? Company, int? AllocatedSeats, string? ValidationIssue);
+public sealed record OrganizerDraftDetail(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version, string? ValidationIssue, IReadOnlyList<OrganizerDraftRow> Rows);
