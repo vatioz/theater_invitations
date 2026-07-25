@@ -1,0 +1,132 @@
+@page "/organizer"
+@attribute [Authorize(Policy = "OrganizerViewer")]
+@rendermode InteractiveServer
+@using TheaterInvitations.Web.Services
+@inject OrganizerService OrganizerService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Organizer</PageTitle>
+
+<main class="organizer-page">
+    <header>
+        <p class="eyebrow">Organizer</p>
+        <h1>Invitation administration</h1>
+        <p>Development access: <a href="/dev/login/Viewer">Viewer</a> | <a href="/dev/login/Operator">Operator</a> | <a href="/dev/login/ElevatedOperator">Elevated operator</a> | <a href="/dev/logout">Sign out</a></p>
+    </header>
+
+    @if (dashboard is null)
+    {
+        <p>Loading invitation data...</p>
+    }
+    else
+    {
+        <section class="metrics" aria-label="Invitation metrics">
+            <p><strong>@dashboard.ConfirmedSeats</strong> confirmed seats</p>
+            <p><strong>@dashboard.ActivePendingSeats</strong> active pending seats</p>
+            <p><strong>@dashboard.RemainingCapacity</strong> remaining seats</p>
+            <p><strong>@dashboard.PartyCount</strong> parties</p>
+        </section>
+
+        <section class="rsvp-card">
+            <h2>Global RSVP lock</h2>
+            <p>Guest RSVP is currently <strong>@(dashboard.IsRsvpLocked ? "locked" : "open")</strong>.</p>
+            <AuthorizeView Roles="ElevatedOperator">
+                <Authorized><button @onclick="ToggleLockAsync">@(dashboard.IsRsvpLocked ? "Unlock RSVP" : "Lock RSVP")</button></Authorized>
+            </AuthorizeView>
+        </section>
+
+        <section class="rsvp-card">
+            <h2>Import invitations</h2>
+            <p>Upload CSV columns: <code>primary_guest_name,email,company,allocated_seats</code>.</p>
+            <AuthorizeView Roles="Operator,ElevatedOperator">
+                <Authorized>
+                    <InputFile OnChange="PreviewAsync" accept=".csv,text/csv" />
+                    @if (preview is not null)
+                    {
+                        <p>@preview.ValidRows.Count valid rows, @preview.Errors.Count invalid rows, @preview.TotalSeats seats.</p>
+                        @foreach (var error in preview.Errors)
+                        {
+                            <p class="validation-message">@error</p>
+                        }
+                        @if (preview.IsValid)
+                        {
+                            <button @onclick="CommitAsync">Commit draft batch</button>
+                        }
+                    }
+                </Authorized>
+                <NotAuthorized><p>You have read-only access.</p></NotAuthorized>
+            </AuthorizeView>
+        </section>
+
+        <section class="rsvp-card">
+            <h2>Parties</h2>
+            <table>
+                <thead><tr><th>Name</th><th>Email</th><th>Seats</th><th>Status</th><th>Batch</th></tr></thead>
+                <tbody>
+                    @foreach (var party in dashboard.Parties)
+                    {
+                        <tr><td>@party.Name</td><td>@party.Email</td><td>@party.AllocatedSeats</td><td>@party.Status</td><td>@party.BatchName</td></tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+
+        <section class="rsvp-card">
+            <h2>Recent audit history</h2>
+            <table>
+                <thead><tr><th>When</th><th>Event</th><th>Outcome</th><th>Actor</th></tr></thead>
+                <tbody>
+                    @foreach (var audit in dashboard.Audits)
+                    {
+                        <tr><td>@audit.OccurredAtUtc.LocalDateTime</td><td>@audit.EventType</td><td>@audit.Outcome</td><td>@audit.Actor</td></tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+</main>
+
+@code {
+    private OrganizerDashboard? dashboard;
+    private ImportPreview? preview;
+
+    protected override async Task OnInitializedAsync() => dashboard = await OrganizerService.GetDashboardAsync();
+
+    private async Task PreviewAsync(InputFileChangeEventArgs args)
+    {
+        await RequireRoleAsync("Operator", "ElevatedOperator");
+        await using var stream = args.File.OpenReadStream(1_000_000);
+        using var reader = new StreamReader(stream);
+        preview = await OrganizerService.PreviewImportAsync(await reader.ReadToEndAsync());
+    }
+
+    private async Task CommitAsync()
+    {
+        await RequireRoleAsync("Operator", "ElevatedOperator");
+        if (preview is not null)
+        {
+            await OrganizerService.CommitImportAsync(preview, "Imported batch");
+            preview = null;
+            dashboard = await OrganizerService.GetDashboardAsync();
+        }
+    }
+
+    private async Task ToggleLockAsync()
+    {
+        await RequireRoleAsync("ElevatedOperator");
+        if (dashboard is not null)
+        {
+            await OrganizerService.SetGlobalLockAsync(!dashboard.IsRsvpLocked);
+            dashboard = await OrganizerService.GetDashboardAsync();
+        }
+    }
+
+    private async Task RequireRoleAsync(params string[] roles)
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (!roles.Any(user.IsInRole))
+        {
+            throw new UnauthorizedAccessException();
+        }
+    }
+}

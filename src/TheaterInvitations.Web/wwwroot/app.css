@@ -51,3 +51,14 @@ label { font-family: Arial, sans-serif; }
 textarea { width: 100%; min-height: 7rem; resize: vertical; }
 button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a74420; color: white; cursor: pointer; font: inherit; }
 .validation-message { color: #922b15; font-weight: bold; }
+
+.organizer-page { max-width: 72rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.organizer-page h1 { font-size: clamp(2rem, 6vw, 3.5rem); }
+.organizer-page h2 { margin-top: 0; }
+.organizer-page > section { margin-top: 1.5rem; width: 100%; }
+.metrics { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); background: #d8d1c4; }
+.metrics p { margin: 0; padding: 1.2rem; background: #fffdf8; font-family: Arial, sans-serif; }
+.metrics strong { display: block; font-size: 2rem; color: #a74420; }
+table { width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size: .9rem; }
+th, td { padding: .65rem; border-bottom: 1px solid #d8d1c4; text-align: left; }
+th { color: #58656a; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; }
