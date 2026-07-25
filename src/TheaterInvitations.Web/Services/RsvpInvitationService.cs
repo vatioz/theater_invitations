@@ -14,10 +14,9 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
         }
 
         var tokenHash = RsvpService.HashToken(token);
-        var invitation = await (
+        var partyInvitation = await (
             from party in db.InvitationParties
             join batch in db.InvitationBatches on party.BatchId equals batch.Id
-            from configuration in db.EventConfigurations
             where party.TokenHash == tokenHash
             select new
             {
@@ -26,33 +25,37 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
                 party.Status,
                 party.AccessibilityRequirements,
                 batch.DeadlineUtc,
-                configuration.TimeZoneId,
-                configuration.SupportEmail,
-                configuration.AccessibilityTextLimit,
-                configuration.IsRsvpLocked,
                 party.Version
             }).SingleOrDefaultAsync(cancellationToken);
 
-        if (invitation is null)
+        if (partyInvitation is null)
         {
             return null;
         }
 
-        var isExpired = invitation.Status == InvitationStatus.Expired ||
-            (invitation.Status == InvitationStatus.Pending && clock.UtcNow >= invitation.DeadlineUtc);
+        var configuration = await db.EventConfigurations.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        var isExpired = partyInvitation.Status == InvitationStatus.Expired ||
+            (partyInvitation.Status == InvitationStatus.Pending && clock.UtcNow >= partyInvitation.DeadlineUtc);
         return new RsvpInvitation(
-            invitation.PrimaryGuestName,
-            invitation.AllocatedSeats,
-            invitation.DeadlineUtc,
-            invitation.TimeZoneId,
-            invitation.SupportEmail,
-            invitation.AccessibilityTextLimit,
-            invitation.Status,
-            invitation.IsRsvpLocked,
-            invitation.AccessibilityRequirements,
-            invitation.Version)
+            partyInvitation.PrimaryGuestName,
+            partyInvitation.AllocatedSeats,
+            partyInvitation.DeadlineUtc,
+            configuration?.EventName ?? string.Empty,
+            configuration?.DoorsAtUtc ?? default,
+            configuration?.StartsAtUtc ?? default,
+            configuration?.VenueName ?? string.Empty,
+            configuration?.VenueAddress ?? string.Empty,
+            configuration?.DressCode,
+            configuration?.TimeZoneId ?? string.Empty,
+            configuration?.SupportEmail ?? string.Empty,
+            configuration?.AccessibilityTextLimit ?? 0,
+            partyInvitation.Status,
+            configuration?.IsRsvpLocked ?? false,
+            partyInvitation.AccessibilityRequirements,
+            partyInvitation.Version)
         {
-            IsExpired = isExpired
+            IsExpired = isExpired,
+            IsConfigurationAvailable = configuration is not null
         };
     }
 }

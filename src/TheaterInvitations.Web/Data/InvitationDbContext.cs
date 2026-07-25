@@ -15,6 +15,10 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
         modelBuilder.Entity<EventConfiguration>(entity =>
         {
             entity.Property(x => x.Capacity).IsRequired();
+            entity.Property(x => x.EventName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.VenueName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.VenueAddress).HasMaxLength(500).IsRequired();
+            entity.Property(x => x.DressCode).HasMaxLength(500);
             entity.Property(x => x.TimeZoneId).HasMaxLength(128).IsRequired();
             entity.Property(x => x.SupportEmail).HasMaxLength(320).IsRequired();
             entity.Property(x => x.Version).IsRowVersion();

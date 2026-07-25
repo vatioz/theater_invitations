@@ -2,7 +2,11 @@
 
 <section class="rsvp-card" aria-labelledby="unavailable-heading">
     <h1 id="unavailable-heading">@Heading</h1>
-    <p>Self-service RSVP is unavailable. For assistance, contact <a href="mailto:@Invitation.SupportEmail">@Invitation.SupportEmail</a>.</p>
+    <p>Self-service RSVP is unavailable.</p>
+    @if (!string.IsNullOrWhiteSpace(Invitation.SupportEmail))
+    {
+        <SupportContact Invitation="Invitation" />
+    }
 </section>
 
 @code {

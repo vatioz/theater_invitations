@@ -34,9 +34,49 @@
         </section>
 
         <section class="rsvp-card">
+            <h2>Event configuration</h2>
+            @if (dashboard.Configuration is null)
+            {
+                <p>Event configuration has not been created. Public RSVP submissions are unavailable until an elevated organizer saves it.</p>
+            }
+            else
+            {
+                <p>Public RSVP pages use the saved event details and support contact.</p>
+                <dl class="configuration-summary">
+                    <div><dt>Event</dt><dd>@dashboard.Configuration.EventName</dd></div>
+                    <div><dt>Venue</dt><dd>@dashboard.Configuration.VenueName</dd></div>
+                    <div><dt>Support</dt><dd>@(string.IsNullOrWhiteSpace(dashboard.Configuration.SupportEmail) ? "Not configured" : dashboard.Configuration.SupportEmail)</dd></div>
+                    <div><dt>Time zone</dt><dd>@dashboard.Configuration.TimeZoneId</dd></div>
+                </dl>
+            }
+            <AuthorizeView Roles="ElevatedOperator" Context="supportAuth">
+                <Authorized>
+                    <EditForm Model="eventConfiguration" OnValidSubmit="SaveEventConfigurationAsync" FormName="event-configuration" class="manage-form">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+                        <label>Event name <InputText @bind-Value="eventConfiguration.EventName" /></label>
+                        <label>Event time zone <InputText @bind-Value="eventConfiguration.TimeZoneId" /></label>
+                        <label>Doors time <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="eventConfiguration.DoorsLocal" /></label>
+                        <label>Start time <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="eventConfiguration.StartsLocal" /></label>
+                        <label>Venue name <InputText @bind-Value="eventConfiguration.VenueName" /></label>
+                        <label>Venue address <InputTextArea @bind-Value="eventConfiguration.VenueAddress" /></label>
+                        <label>Dress code (optional) <InputText @bind-Value="eventConfiguration.DressCode" /></label>
+                        <label>Support email (optional) <InputText @bind-Value="eventConfiguration.SupportEmail" /></label>
+                        <label>Capacity <InputNumber @bind-Value="eventConfiguration.Capacity" /></label>
+                        <label>Accessibility character limit <InputNumber @bind-Value="eventConfiguration.AccessibilityTextLimit" /></label>
+                        <button type="submit">Save event configuration</button>
+                    </EditForm>
+                </Authorized>
+                <NotAuthorized>
+                    <p>You have read-only access to event configuration.</p>
+                </NotAuthorized>
+            </AuthorizeView>
+        </section>
+
+        <section class="rsvp-card">
             <h2>Global RSVP lock</h2>
             <p>Guest RSVP is currently <strong>@(dashboard.IsRsvpLocked ? "locked" : "open")</strong>.</p>
-            <AuthorizeView Roles="ElevatedOperator">
+            <AuthorizeView Roles="ElevatedOperator" Context="lockAuth">
                 <Authorized>
                     @if (!confirmingLock)
                     {
@@ -81,6 +121,10 @@
                 <InputSelect @bind-Value="filters.Status">
                     <option value="">All statuses</option>
                     @foreach (var status in Enum.GetValues<InvitationStatus>()) { <option value="@status">@status</option> }
+                </InputSelect>
+                <InputSelect @bind-Value="filters.BatchId">
+                    <option value="">All batches</option>
+                    @foreach (var batch in batches) { <option value="@batch.Id">@batch.Name</option> }
                 </InputSelect>
                 <button type="submit">Filter</button>
             </EditForm>
@@ -163,17 +207,30 @@
     private OrganizerParty? selectedParty;
     private readonly CorrectionModel correction = new();
     private readonly OverrideModel overrideModel = new();
+    private readonly EventConfigurationModel eventConfiguration = new();
+    private IReadOnlyList<OrganizerBatch> batches = Array.Empty<OrganizerBatch>();
     private bool confirmingLock;
     private string? actionError;
 
-    protected override async Task OnInitializedAsync() => await RefreshDashboardAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshDashboardAsync();
+        batches = await OrganizerService.GetBatchesAsync();
+    }
 
     private async Task PreviewAsync(InputFileChangeEventArgs args)
     {
         await RequireRoleAsync("Operator", "ElevatedOperator");
-        await using var stream = args.File.OpenReadStream(1_000_000);
-        using var reader = new StreamReader(stream);
-        preview = await OrganizerService.PreviewImportAsync(await reader.ReadToEndAsync());
+        try
+        {
+            await using var stream = args.File.OpenReadStream(1_000_000);
+            using var reader = new StreamReader(stream, new System.Text.UTF8Encoding(false, true), true);
+            preview = await OrganizerService.PreviewImportAsync(await reader.ReadToEndAsync());
+        }
+        catch (IOException)
+        {
+            preview = new ImportPreview(Array.Empty<ImportRow>(), new[] { "CSV must be valid UTF-8 and 1 MB or smaller." });
+        }
     }
 
     private async Task CommitAsync()
@@ -186,6 +243,7 @@
                 await OrganizerService.CommitImportAsync(preview, "Imported batch");
                 preview = null;
                 await RefreshDashboardAsync();
+                batches = await OrganizerService.GetBatchesAsync();
             }
             catch (InvalidOperationException exception)
             {
@@ -221,11 +279,38 @@
     private async Task RefreshDashboardAsync()
     {
         dashboard = await OrganizerService.GetDashboardAsync();
+        eventConfiguration.Load(dashboard.Configuration);
         if (partyGrid is not null) await partyGrid.RefreshDataAsync();
     }
 
+    private async Task SaveEventConfigurationAsync()
+    {
+        await RequireRoleAsync("ElevatedOperator");
+        try
+        {
+            await OrganizerService.SaveEventConfigurationAsync(
+                new EventConfigurationInput(eventConfiguration.Capacity, eventConfiguration.EventName, eventConfiguration.DoorsLocal, eventConfiguration.StartsLocal, eventConfiguration.VenueName, eventConfiguration.VenueAddress, eventConfiguration.DressCode, eventConfiguration.TimeZoneId, eventConfiguration.SupportEmail, eventConfiguration.AccessibilityTextLimit),
+                dashboard!.Configuration?.Version);
+            actionError = null;
+            await RefreshDashboardAsync();
+        }
+        catch (StaleDataException exception)
+        {
+            actionError = exception.Message;
+            await RefreshDashboardAsync();
+        }
+        catch (ArgumentException exception)
+        {
+            actionError = exception.Message;
+        }
+        catch (InvalidOperationException exception)
+        {
+            actionError = exception.Message;
+        }
+    }
+
     private ValueTask<GridItemsProviderResult<OrganizerParty>> ProvideParties(GridItemsProviderRequest<OrganizerParty> request) =>
-        OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status);
+        OrganizerService.GetPartiesAsync(request, filters.Search, filters.Status, filters.BatchId);
 
     private ValueTask<GridItemsProviderResult<OrganizerAudit>> ProvideAudits(GridItemsProviderRequest<OrganizerAudit> request) =>
         OrganizerService.GetAuditsAsync(request);
@@ -270,7 +355,7 @@
         }
     }
 
-    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } }
+    private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } public Guid? BatchId { get; set; } }
     private sealed class CorrectionModel
     {
         [Required] public string Name { get; set; } = string.Empty;
@@ -279,4 +364,33 @@
         [Range(1, int.MaxValue)] public int Seats { get; set; }
     }
     private sealed class OverrideModel { public InvitationStatus Status { get; set; } public string Reason { get; set; } = string.Empty; }
+    private sealed class EventConfigurationModel
+    {
+        public int Capacity { get; set; } = 340;
+        public string EventName { get; set; } = string.Empty;
+        public DateTime DoorsLocal { get; set; } = DateTime.Today.AddHours(18);
+        public DateTime StartsLocal { get; set; } = DateTime.Today.AddHours(19);
+        public string VenueName { get; set; } = string.Empty;
+        public string VenueAddress { get; set; } = string.Empty;
+        public string? DressCode { get; set; }
+        public string TimeZoneId { get; set; } = "Europe/Prague";
+        public string? SupportEmail { get; set; }
+        public int AccessibilityTextLimit { get; set; } = 500;
+
+        public void Load(TheaterInvitations.Web.Data.EventConfiguration? configuration)
+        {
+            if (configuration is null) return;
+            Capacity = configuration.Capacity;
+            EventName = configuration.EventName;
+            var timeZone = TimeZoneInfo.FindSystemTimeZoneById(configuration.TimeZoneId);
+            if (configuration.DoorsAtUtc != default) DoorsLocal = TimeZoneInfo.ConvertTime(configuration.DoorsAtUtc, timeZone).DateTime;
+            if (configuration.StartsAtUtc != default) StartsLocal = TimeZoneInfo.ConvertTime(configuration.StartsAtUtc, timeZone).DateTime;
+            VenueName = configuration.VenueName;
+            VenueAddress = configuration.VenueAddress;
+            DressCode = configuration.DressCode;
+            TimeZoneId = configuration.TimeZoneId;
+            SupportEmail = configuration.SupportEmail;
+            AccessibilityTextLimit = configuration.AccessibilityTextLimit;
+        }
+    }
 }

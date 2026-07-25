@@ -35,7 +35,7 @@ builder.Services.AddSingleton<ITransactionRetry, TransactionRetry>();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+if (DevelopmentSeedGuard.ShouldSeed(app.Environment))
 {
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<InvitationDbContext>();

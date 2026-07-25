@@ -51,6 +51,17 @@ label { font-family: Arial, sans-serif; }
 textarea { width: 100%; min-height: 7rem; resize: vertical; }
 button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a74420; color: white; cursor: pointer; font: inherit; }
 .validation-message { color: #922b15; font-weight: bold; }
+.event-details { margin: 1.5rem 0; padding-top: 1.25rem; border-top: 1px solid #d8d1c4; }
+.event-details h2 { margin: .2rem 0 1rem; }
+.event-details dl { display: grid; gap: .65rem; margin: 0; }
+.event-details dl > div { display: grid; grid-template-columns: minmax(5rem, 7rem) 1fr; gap: .75rem; }
+.event-details dt { color: #58656a; font: bold .8rem Arial, sans-serif; text-transform: uppercase; }
+.event-details dd { margin: 0; overflow-wrap: anywhere; }
+.event-address { white-space: pre-line; }
+.configuration-summary { display: grid; gap: .5rem; margin: 1rem 0; }
+.configuration-summary > div { display: grid; grid-template-columns: minmax(5rem, 7rem) 1fr; gap: .75rem; }
+.configuration-summary dt { color: #58656a; font: bold .8rem Arial, sans-serif; text-transform: uppercase; }
+.configuration-summary dd { margin: 0; overflow-wrap: anywhere; }
 
 .organizer-page { max-width: 72rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
 .organizer-page h1 { font-size: clamp(2rem, 6vw, 3.5rem); }

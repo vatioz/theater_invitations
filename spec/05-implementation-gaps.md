@@ -31,11 +31,11 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| R1 | Event details on RSVP page | High | Open | Configure and display date, doors/start time, venue, address, and optional dress code. |
-| R2 | Replace placeholder support contact | High before real invitations | Open | Replace `rsvp@example.test` with a monitored event support mailbox. |
-| R3 | Browser, mobile, and accessibility verification | High | Open | Manually verify mobile layout, keyboard navigation, focus order, labels, rapid double-submit, and refresh/back behavior. Automated browser tests are optional for a one-off event. |
-| R4 | Guard development seed data | Medium | Open | Test that the known development RSVP token cannot be seeded in staging or production. |
-| R5 | Public page-view audit events | Low | Open | Record sanitized valid, invalid, expired, locked, and current-response page views without tokens. |
+| R1 | Event details on RSVP page | High | In Progress | Persisted event details, organizer-managed configuration, and public presentation are implemented; production event values remain to be configured. |
+| R2 | Replace placeholder support contact | High before real invitations | In Progress | Role-gated editing, validation, concurrency protection, auditing, and public unavailable-state links are implemented; the approved mailbox remains to be configured. |
+| R3 | Browser, mobile, and accessibility verification | High | Deferred | Manual and automated browser and accessibility verification is documented in [06-public-rsvp-experience.md](06-public-rsvp-experience.md) but is not currently planned for implementation. |
+| R4 | Guard development seed data | Medium | In Progress | Composition and token-absence tests cover Development, Staging, and Production; the production deployment smoke query remains to be wired into deployment operations. |
+| R5 | Public page-view audit events | Low | Deferred | Sanitized public page-view auditing is documented in [06-public-rsvp-experience.md](06-public-rsvp-experience.md) but is not currently planned for implementation. |
 
 ## Auditing And Diagnostics
 
@@ -49,11 +49,11 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| O1 | Email syntax validation | High | Open | Validate email syntax server-side on imports and corrections; presence and browser validation are insufficient. |
+| O1 | Email syntax validation | High | Completed | Imports and corrections validate normalized email syntax server-side before duplicate and capacity checks. |
 | O2 | Confirmation for destructive actions | Medium | Open | Global lock already confirms. Add confirmation for status overrides and consequential corrections, especially seat reductions or email changes. |
-| O3 | Effective-status dashboard metrics | High | Open | Exclude effectively expired pending parties from pending-seat metrics so dashboard metrics match capacity calculations. |
-| O4 | CSV parser hardening | Medium | Open | Improve malformed-input diagnostics and test multiline fields, Unicode, encoding, and size limits. A mature CSV library is an alternative. |
-| O5 | Batch filter and grid refinements | Low | Open | Add a batch filter to QuickGrid. Sorting and pagination are implemented. |
+| O3 | Effective-status dashboard metrics | High | Completed | Active pending seats now exclude pending parties at or past their deadline, matching the capacity calculation. |
+| O4 | CSV parser hardening | Medium | Completed | The quoted-field parser reports malformed CSV, preserves multiline Unicode fields, accepts UTF-8 BOM input, and enforces a 1 MB limit. |
+| O5 | Batch filter and grid refinements | Low | Completed | QuickGrid includes a stable batch-ID filter; sorting and pagination remain available. |
 
 ## Batch Management
 
@@ -68,6 +68,6 @@ Treat batch management as a separate follow-up phase.
 
 ## Suggested One-Off Minimum
 
-Implement `S1`, `S4`, `A1`, `R1`, `R2`, `R3`, `O1`, `O3`, `B1`, and `B4`.
+Implement `S1`, `S4`, `A1`, `R1`, `R2`, `O1`, `O3`, `B1`, and `B4`.
 
 Implement `B2` and `B3` only when several invitation waves or deadline changes are expected. Lower-priority audit, grid, and workflow refinements can be deferred.

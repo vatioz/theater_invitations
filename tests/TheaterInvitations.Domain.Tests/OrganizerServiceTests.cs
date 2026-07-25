@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
@@ -58,6 +60,37 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Preview_rejects_invalid_email_and_preserves_unicode_multiline_fields()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        var invalid = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex,not-an-email,,1");
+        var valid = await service.PreviewImportAsync("\uFEFFprimary_guest_name,email,company,allocated_seats\n Žaneta , zaneta@example.test ,\"Divadlo\nČeský Krumlov\",1");
+
+        Assert.Equal("Row 2: email must be a valid address.", Assert.Single(invalid.Errors));
+        Assert.True(valid.IsValid);
+        Assert.Equal("Žaneta", valid.ValidRows.Single().Name);
+        Assert.Equal("zaneta@example.test", valid.ValidRows.Single().Email);
+        Assert.Equal("Divadlo\nČeský Krumlov", valid.ValidRows.Single().Company);
+    }
+
+    [Fact]
+    public async Task Preview_reports_malformed_csv_and_size_limit()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        var malformed = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex,alex@example.test,\"Unclosed,1");
+        var oversized = await service.PreviewImportAsync(new string('a', 1_000_001));
+
+        Assert.Contains("Malformed CSV", Assert.Single(malformed.Errors));
+        Assert.Equal("CSV must be 1 MB or smaller.", Assert.Single(oversized.Errors));
+    }
+
+    [Fact]
     public async Task Correction_updates_party_and_records_the_organizer()
     {
         await using var db = CreateDb();
@@ -74,6 +107,18 @@ public sealed class OrganizerServiceTests
         var audit = await db.AuditEvents.SingleAsync();
         Assert.Equal("PartyCorrected", audit.EventType);
         Assert.Equal("Development Operator", audit.ActorIdentifier);
+    }
+
+    [Fact]
+    public async Task Correction_rejects_invalid_email_server_side()
+    {
+        await using var db = CreateDb();
+        var party = await AddPartyAsync(db);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, "not-an-email", null, 1));
+
+        Assert.Equal(party.Email, (await db.InvitationParties.SingleAsync()).Email);
     }
 
     [Fact]
@@ -111,6 +156,49 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Dashboard_active_pending_and_remaining_capacity_exclude_effectively_expired_parties()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var activeBatch = new InvitationBatch { Name = "Active", DeadlineUtc = new DateTimeOffset(2026, 7, 25, 13, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var expiredBatch = new InvitationBatch { Name = "Expired", DeadlineUtc = new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(activeBatch, expiredBatch);
+        db.AddRange(
+            new InvitationParty { BatchId = activeBatch.Id, PrimaryGuestName = "Confirmed", Email = "confirmed@example.test", AllocatedSeats = 2, TokenHash = RsvpService.HashToken("confirmed") },
+            new InvitationParty { BatchId = activeBatch.Id, PrimaryGuestName = "Pending", Email = "pending@example.test", AllocatedSeats = 3, TokenHash = RsvpService.HashToken("pending") },
+            new InvitationParty { BatchId = expiredBatch.Id, PrimaryGuestName = "Expired pending", Email = "expired@example.test", AllocatedSeats = 4, TokenHash = RsvpService.HashToken("expired") });
+        await db.SaveChangesAsync();
+        var confirmed = await db.InvitationParties.SingleAsync(x => x.Email == "confirmed@example.test");
+        confirmed.OverrideStatus(InvitationStatus.Confirmed, DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync();
+
+        var dashboard = await CreateService(db).GetDashboardAsync();
+
+        Assert.Equal(2, dashboard.ConfirmedSeats);
+        Assert.Equal(3, dashboard.ActivePendingSeats);
+        Assert.Equal(5, dashboard.RemainingCapacity);
+    }
+
+    [Fact]
+    public async Task Party_queries_filter_by_stable_batch_id()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var first = new InvitationBatch { Name = "First", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var second = new InvitationBatch { Name = "Second", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(first, second);
+        db.AddRange(
+            new InvitationParty { BatchId = first.Id, PrimaryGuestName = "First guest", Email = "first@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("first") },
+            new InvitationParty { BatchId = second.Id, PrimaryGuestName = "Second guest", Email = "second@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("second") });
+        await db.SaveChangesAsync();
+
+        var dashboard = await CreateService(db).GetDashboardAsync(new PartyQuery(BatchId: second.Id));
+
+        Assert.Equal(1, dashboard.PartyCount);
+        Assert.Equal("Second guest", Assert.Single(dashboard.Parties).Name);
+    }
+
+    [Fact]
     public async Task Mutation_rejects_stale_version()
     {
         await using var db = CreateDb();
@@ -130,15 +218,102 @@ public sealed class OrganizerServiceTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, party.Email, null, 1));
     }
 
+    [Fact]
+    public async Task Elevated_operator_updates_support_email_and_records_sanitized_audit()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db, environmentName: Environments.Production);
+        var dashboard = await service.GetDashboardAsync();
+
+        await service.UpdateSupportEmailAsync("help@theater.org", dashboard.Configuration!.Version);
+
+        db.ChangeTracker.Clear();
+        Assert.Equal("help@theater.org", (await db.EventConfigurations.SingleAsync()).SupportEmail);
+        var audit = await db.AuditEvents.SingleAsync();
+        Assert.Equal("SupportEmailChanged", audit.EventType);
+        Assert.Equal("Accepted", audit.Outcome);
+        Assert.Equal("Development ElevatedOperator", audit.ActorIdentifier);
+        Assert.Null(audit.ReasonCategory);
+    }
+
+    [Fact]
+    public async Task Invalid_production_support_email_is_rejected_and_audited_without_address()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db, environmentName: Environments.Production);
+        var dashboard = await service.GetDashboardAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateSupportEmailAsync("not-an-email", dashboard.Configuration!.Version));
+
+        db.ChangeTracker.Clear();
+        Assert.Equal("rsvp@example.test", (await db.EventConfigurations.SingleAsync()).SupportEmail);
+        var audit = await db.AuditEvents.SingleAsync();
+        Assert.Equal("Rejected", audit.Outcome);
+        Assert.Equal("invalid-email", audit.ReasonCategory);
+        Assert.DoesNotContain("not-an-email", audit.CorrelationId);
+    }
+
+    [Fact]
+    public async Task Stale_support_email_update_is_rejected_and_current_value_is_preserved()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<StaleDataException>(() => service.UpdateSupportEmailAsync("help@theater.org", 42));
+
+        Assert.Equal("rsvp@example.test", (await db.EventConfigurations.AsNoTracking().SingleAsync()).SupportEmail);
+        Assert.Equal("stale", (await db.AuditEvents.SingleAsync()).ReasonCategory);
+    }
+
+    [Fact]
+    public async Task Support_email_update_requires_elevated_authorization()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var service = CreateService(db, new DeniedAuthorization());
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.UpdateSupportEmailAsync("help@theater.org", 0));
+    }
+
+    [Fact]
+    public async Task Elevated_operator_can_create_missing_event_configuration()
+    {
+        await using var db = CreateDb();
+        var service = CreateService(db);
+
+        await service.SaveEventConfigurationAsync(new EventConfigurationInput(340, "Theater Gala", new DateTime(2026, 10, 17, 18, 30, 0), new DateTime(2026, 10, 17, 19, 30, 0), "Main Theater", "1 Theater Street", "Smart casual", "Europe/Prague", "help@theater.org", 500), null);
+
+        var configuration = await db.EventConfigurations.SingleAsync();
+        Assert.Equal("Theater Gala", configuration.EventName);
+        Assert.Equal("help@theater.org", configuration.SupportEmail);
+        var audits = await db.AuditEvents.ToListAsync();
+        Assert.Contains(audits, x => x.EventType == "EventConfigurationSaved" && x.Outcome == "Accepted");
+        Assert.Contains(audits, x => x.EventType == "SupportEmailChanged" && x.Outcome == "Accepted");
+    }
+
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
-    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null) => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry());
+    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
-        db.EventConfigurations.Add(new EventConfiguration { Capacity = capacity, TimeZoneId = "Europe/Prague", SupportEmail = "rsvp@example.test", AccessibilityTextLimit = 500 });
+        db.EventConfigurations.Add(new EventConfiguration
+        {
+            Capacity = capacity,
+            EventName = "Theater Gala",
+            DoorsAtUtc = new DateTimeOffset(2026, 8, 1, 16, 0, 0, TimeSpan.Zero),
+            StartsAtUtc = new DateTimeOffset(2026, 8, 1, 17, 0, 0, TimeSpan.Zero),
+            VenueName = "Main Theater",
+            VenueAddress = "1 Theater Street",
+            TimeZoneId = "Europe/Prague",
+            SupportEmail = "rsvp@example.test",
+            AccessibilityTextLimit = 500
+        });
         await db.SaveChangesAsync();
     }
 
@@ -172,5 +347,13 @@ public sealed class OrganizerServiceTests
     private sealed class DeniedAuthorization : IOrganizerAuthorization
     {
         public Task<string> RequireAsync(string policy, CancellationToken cancellationToken = default) => throw new UnauthorizedAccessException();
+    }
+
+    private sealed class TestEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+        public string ApplicationName { get; set; } = "Tests";
+        public string ContentRootPath { get; set; } = string.Empty;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

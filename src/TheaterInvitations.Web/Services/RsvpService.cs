@@ -40,7 +40,14 @@ public sealed class RsvpService(IDbContextFactory<InvitationDbContext> dbFactory
         }
 
         var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == party.BatchId, cancellationToken);
-        var configuration = await operationDb.EventConfigurations.SingleAsync(cancellationToken);
+        var configuration = await operationDb.EventConfigurations.SingleOrDefaultAsync(cancellationToken);
+        if (configuration is null)
+        {
+            AddAudit(operationDb, "RsvpSubmitted", "Rejected", party.Id, batch.Id, correlationId, "configuration-unavailable", party.Status, RequestedStatus(submission.Response), party.Status);
+            await operationDb.SaveChangesAsync(cancellationToken);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+            return new RsvpSubmissionResult(RsvpResult.Locked);
+        }
 
         if (submission.ExpectedVersion is not null && submission.ExpectedVersion != party.Version)
         {

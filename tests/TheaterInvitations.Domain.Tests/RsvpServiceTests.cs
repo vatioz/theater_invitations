@@ -115,7 +115,19 @@ public sealed class RsvpServiceTests
             AllocatedSeats = seats,
             TokenHash = RsvpService.HashToken("valid-token")
         };
-        db.Add(new EventConfiguration { Capacity = capacity, TimeZoneId = "Europe/Prague", SupportEmail = "rsvp@example.test", AccessibilityTextLimit = accessibilityTextLimit, IsRsvpLocked = isLocked });
+        db.Add(new EventConfiguration
+        {
+            Capacity = capacity,
+            EventName = "Theater Gala",
+            DoorsAtUtc = new DateTimeOffset(2026, 8, 1, 16, 0, 0, TimeSpan.Zero),
+            StartsAtUtc = new DateTimeOffset(2026, 8, 1, 17, 0, 0, TimeSpan.Zero),
+            VenueName = "Main Theater",
+            VenueAddress = "1 Theater Street",
+            TimeZoneId = "Europe/Prague",
+            SupportEmail = "rsvp@example.test",
+            AccessibilityTextLimit = accessibilityTextLimit,
+            IsRsvpLocked = isLocked
+        });
         db.Add(batch);
         db.Add(party);
         await db.SaveChangesAsync();
