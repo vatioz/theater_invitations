@@ -61,10 +61,10 @@ Treat batch management as a separate follow-up phase.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| B1 | Organizer-supplied batch name and deadline | High | Open | Replace the fixed `Imported batch` name and 14-day deadline with organizer input in the configured event time zone. |
-| B2 | Persisted draft-batch workflow | Medium | Open | Allow previewing, saving, reviewing, and committing a draft batch across sessions. |
-| B3 | Deadline administration with capacity rechecks | High if multiple batches or extensions are used | Open | An extended deadline can reactivate capacity already reused elsewhere. Transactionally reject an extension that overbooks. |
-| B4 | RSVP token lifecycle for sending invitations | High before Phase 4 | Open | Imported parties retain only a token hash. Define secure token generation, storage, and retrieval so email campaigns can send RSVP URLs without leaking tokens. |
+| B1 | Organizer-supplied batch name and deadline | High | In Progress | Draft metadata and configured-zone deadline input are implemented; detailed behavior is in [07-batch-management.md](07-batch-management.md). |
+| B2 | Persisted draft-batch workflow | Medium | In Progress | Persisted draft rows, review, and transactional commit are implemented; retention cleanup remains operational work. |
+| B3 | Deadline administration with capacity rechecks | High if multiple batches or extensions are used | In Progress | Transactional deadline changes and system-expiration reopening are implemented; browser and concurrency coverage remains to be expanded. |
+| B4 | RSVP token lifecycle for sending invitations | High before Phase 4 | In Progress | Active token records, protected delivery envelopes, and regeneration are implemented; Phase 4 campaign dispatch remains pending. |
 
 ## Suggested One-Off Minimum
 

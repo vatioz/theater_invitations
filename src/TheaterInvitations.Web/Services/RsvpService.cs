@@ -26,7 +26,10 @@ public sealed class RsvpService(IDbContextFactory<InvitationDbContext> dbFactory
             ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
             : null;
 
-        var party = await operationDb.InvitationParties.SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
+        var tokenRecord = await operationDb.RsvpTokens.SingleOrDefaultAsync(x => x.Hash == tokenHash, cancellationToken);
+        var party = tokenRecord is not null && tokenRecord.RevokedAtUtc is not null
+            ? null
+            : await operationDb.InvitationParties.SingleOrDefaultAsync(x => tokenRecord != null ? x.Id == tokenRecord.PartyId : x.TokenHash == tokenHash, cancellationToken);
         if (party is null)
         {
             AddAudit(operationDb, "RsvpSubmitted", "Rejected", null, null, correlationId, "invalid-token", null, RequestedStatus(submission.Response), null);

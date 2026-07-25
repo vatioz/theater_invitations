@@ -92,12 +92,29 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
         Assert.Single(await verificationDb.AuditEvents.Where(x => x.EventType == "SupportEmailChanged" && x.Outcome == "Rejected" && x.ReasonCategory == "stale").ToListAsync());
     }
 
+    [Fact]
+    public async Task Concurrent_draft_commits_do_not_exceed_capacity()
+    {
+        await database.ResetAsync();
+        await SeedConfigurationAsync(capacity: 3);
+        var deadline = new DateTime(2026, 7, 26, 18, 0, 0);
+        var first = await CreateOrganizerService().SaveDraftAsync(new BatchDraftInput("First draft", deadline), "primary_guest_name,email,company,allocated_seats\nFirst,first@example.test,,2");
+        var second = await CreateOrganizerService().SaveDraftAsync(new BatchDraftInput("Second draft", deadline), "primary_guest_name,email,company,allocated_seats\nSecond,second@example.test,,2");
+
+        var results = await RunCapturingAsync(
+            () => CreateOrganizerService().CommitDraftAsync(first.Id, first.Version),
+            () => CreateOrganizerService().CommitDraftAsync(second.Id, second.Version));
+
+        Assert.Single(results, result => result is null);
+        Assert.Equal(2, await ReservedSeatsAsync());
+    }
+
     private RsvpService CreateRsvpService() => new(database, new FixedClock(), new TransactionRetry());
 
     private OrganizerService CreateOrganizerService()
     {
         var db = database.CreateDbContext();
-        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment());
+        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(), new TestEnvelopeProtector());
     }
 
     private async Task<List<InvitationParty>> SeedPendingPartiesAsync(int capacity, int count)
@@ -159,5 +176,9 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
         public string ApplicationName { get; set; } = "Tests";
         public string ContentRootPath { get; set; } = string.Empty;
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
+    private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
+    {
+        public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
     }
 }

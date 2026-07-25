@@ -2,6 +2,7 @@
 @attribute [Authorize(Policy = "OrganizerViewer")]
 @rendermode InteractiveServer
 @using TheaterInvitations.Web.Services
+@using TheaterInvitations.Web.Data
 @using TheaterInvitations.Domain
 @using System.ComponentModel.DataAnnotations
 @inject OrganizerService OrganizerService
@@ -92,21 +93,50 @@
         </section>
 
         <section class="rsvp-card">
-            <h2>Import invitations</h2>
+            <h2>Batch drafts</h2>
             <p>Upload CSV columns: <code>primary_guest_name,email,company,allocated_seats</code>.</p>
             <AuthorizeView Roles="Operator,ElevatedOperator">
                 <Authorized>
-                    <InputFile OnChange="PreviewAsync" accept=".csv,text/csv" />
-                    @if (preview is not null)
+                    @if (dashboard.Configuration is null)
                     {
-                        <p>@preview.ValidRows.Count valid rows, @preview.Errors.Count invalid rows, @preview.TotalSeats seats.</p>
-                        @foreach (var error in preview.Errors)
+                        <p class="validation-message">Configure the event before creating a batch draft.</p>
+                    }
+                    else
+                    {
+                        <label>Batch name <InputText @bind-Value="draftInput.Name" /></label>
+                        <label>Deadline (@dashboard.Configuration.TimeZoneId) <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="draftInput.DeadlineLocal" /></label>
+                        <InputFile OnChange="CreateDraftAsync" accept=".csv,text/csv" />
+                    }
+                    @if (selectedDraft is not null)
+                    {
+                        <p><strong>@selectedDraft.Name</strong>: @selectedDraft.Rows.Count rows, @selectedDraft.Rows.Count(x => x.ValidationIssue is null) valid, @selectedDraft.Rows.Count(x => x.ValidationIssue is not null) invalid.</p>
+                        @if (!string.IsNullOrWhiteSpace(selectedDraft.ValidationIssue))
                         {
-                            <p class="validation-message">@error</p>
+                            <p class="validation-message">@selectedDraft.ValidationIssue</p>
                         }
-                        @if (preview.IsValid)
+                        @foreach (var row in selectedDraft.Rows.Where(x => x.ValidationIssue is not null))
                         {
-                            <button @onclick="CommitAsync">Commit draft batch</button>
+                            <p class="validation-message">Row @row.SourceRowNumber: @row.ValidationIssue</p>
+                        }
+                        @if (selectedDraft.State == InvitationBatchState.Prepared)
+                        {
+                            @if (confirmingDraftCommit)
+                            {
+                                <p class="notice">Commit this batch? Capacity and duplicate emails will be rechecked before parties are created.</p>
+                                <button @onclick="CommitDraftAsync">Confirm commit</button> <button class="button-secondary" @onclick="(() => confirmingDraftCommit = false)">Cancel</button>
+                            }
+                            else
+                            {
+                                <button @onclick="(() => confirmingDraftCommit = true)">Commit draft batch</button>
+                            }
+                        }
+                    }
+                    @if (drafts.Count > 0)
+                    {
+                        <h3>Saved drafts</h3>
+                        @foreach (var draft in drafts)
+                        {
+                            <p><button class="button-secondary" @onclick="(() => LoadDraftAsync(draft.Id))">Review</button> @draft.Name, @draft.State, deadline @FormatBatchDeadline(draft.DeadlineUtc)</p>
                         }
                     }
                 </Authorized>
@@ -142,6 +172,32 @@
             </QuickGrid>
             </div>
             <Paginator State="pagination" />
+        </section>
+
+        <section class="rsvp-card">
+            <h2>Committed batch deadline</h2>
+            <AuthorizeView Roles="ElevatedOperator" Context="deadlineAuth">
+                <Authorized>
+                    <p>Changing a deadline can reactivate expired pending invitations. Capacity is rechecked when you confirm.</p>
+                    <label>Batch
+                        <InputSelect @bind-Value="deadlineChange.BatchId">
+                            <option value="">Select a committed batch</option>
+                            @foreach (var batch in batches.Where(x => x.State == InvitationBatchState.Committed)) { <option value="@batch.Id">@batch.Name</option> }
+                        </InputSelect>
+                    </label>
+                    <label>New deadline (@dashboard.Configuration?.TimeZoneId) <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="deadlineChange.DeadlineLocal" /></label>
+                    <label>Reason <InputText @bind-Value="deadlineChange.Reason" /></label>
+                    @if (confirmingDeadlineChange)
+                    {
+                        <p class="notice">Confirm the deadline change. Current capacity and batch version will be checked again.</p>
+                        <button @onclick="ChangeDeadlineAsync">Confirm deadline change</button> <button class="button-secondary" @onclick="(() => confirmingDeadlineChange = false)">Cancel</button>
+                    }
+                    else
+                    {
+                        <button @onclick="(() => confirmingDeadlineChange = true)" disabled="@(deadlineChange.BatchId is null)">Change deadline</button>
+                    }
+                </Authorized>
+            </AuthorizeView>
         </section>
 
         @if (selectedParty is not null)
@@ -199,7 +255,7 @@
 
 @code {
     private OrganizerDashboard? dashboard;
-    private ImportPreview? preview;
+    private OrganizerDraftDetail? selectedDraft;
     private readonly PartyFilters filters = new();
     private readonly PaginationState pagination = new() { ItemsPerPage = 25 };
     private readonly PaginationState auditPagination = new() { ItemsPerPage = 25 };
@@ -209,6 +265,11 @@
     private readonly OverrideModel overrideModel = new();
     private readonly EventConfigurationModel eventConfiguration = new();
     private IReadOnlyList<OrganizerBatch> batches = Array.Empty<OrganizerBatch>();
+    private IReadOnlyList<OrganizerDraft> drafts = Array.Empty<OrganizerDraft>();
+    private readonly BatchDraftModel draftInput = new();
+    private readonly DeadlineChangeModel deadlineChange = new();
+    private bool confirmingDraftCommit;
+    private bool confirmingDeadlineChange;
     private bool confirmingLock;
     private string? actionError;
 
@@ -216,38 +277,45 @@
     {
         await RefreshDashboardAsync();
         batches = await OrganizerService.GetBatchesAsync();
+        drafts = await OrganizerService.GetDraftsAsync();
     }
 
-    private async Task PreviewAsync(InputFileChangeEventArgs args)
+    private async Task CreateDraftAsync(InputFileChangeEventArgs args)
     {
         await RequireRoleAsync("Operator", "ElevatedOperator");
         try
         {
             await using var stream = args.File.OpenReadStream(1_000_000);
             using var reader = new StreamReader(stream, new System.Text.UTF8Encoding(false, true), true);
-            preview = await OrganizerService.PreviewImportAsync(await reader.ReadToEndAsync());
+            selectedDraft = await OrganizerService.SaveDraftAsync(new BatchDraftInput(draftInput.Name, draftInput.DeadlineLocal), await reader.ReadToEndAsync());
+            drafts = await OrganizerService.GetDraftsAsync();
+            actionError = null;
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or ArgumentException)
         {
-            preview = new ImportPreview(Array.Empty<ImportRow>(), new[] { "CSV must be valid UTF-8 and 1 MB or smaller." });
+            actionError = exception is IOException ? "CSV must be valid UTF-8 and 1 MB or smaller." : exception.Message;
         }
     }
 
-    private async Task CommitAsync()
+    private async Task CommitDraftAsync()
     {
         await RequireRoleAsync("Operator", "ElevatedOperator");
-        if (preview is not null)
+        if (selectedDraft is not null)
         {
             try
             {
-                await OrganizerService.CommitImportAsync(preview, "Imported batch");
-                preview = null;
+                await OrganizerService.CommitDraftAsync(selectedDraft.Id, selectedDraft.Version);
+                selectedDraft = null;
+                confirmingDraftCommit = false;
                 await RefreshDashboardAsync();
                 batches = await OrganizerService.GetBatchesAsync();
+                drafts = await OrganizerService.GetDraftsAsync();
             }
-            catch (InvalidOperationException exception)
+            catch (Exception exception) when (exception is InvalidOperationException or StaleDataException)
             {
                 actionError = exception.Message;
+                selectedDraft = await OrganizerService.GetDraftAsync(selectedDraft!.Id);
+                confirmingDraftCommit = false;
             }
         }
     }
@@ -283,6 +351,13 @@
         if (partyGrid is not null) await partyGrid.RefreshDataAsync();
     }
 
+    private async Task LoadDraftAsync(Guid batchId)
+    {
+        selectedDraft = await OrganizerService.GetDraftAsync(batchId);
+        confirmingDraftCommit = false;
+        if (selectedDraft is null) actionError = "That draft is no longer available.";
+    }
+
     private async Task SaveEventConfigurationAsync()
     {
         await RequireRoleAsync("ElevatedOperator");
@@ -306,6 +381,27 @@
         catch (InvalidOperationException exception)
         {
             actionError = exception.Message;
+        }
+    }
+
+    private async Task ChangeDeadlineAsync()
+    {
+        await RequireRoleAsync("ElevatedOperator");
+        var batch = batches.SingleOrDefault(x => x.Id == deadlineChange.BatchId);
+        if (batch is null) { actionError = "Select a committed batch."; return; }
+        try
+        {
+            await OrganizerService.ChangeBatchDeadlineAsync(batch.Id, batch.Version, deadlineChange.DeadlineLocal, deadlineChange.Reason);
+            confirmingDeadlineChange = false;
+            actionError = null;
+            await RefreshDashboardAsync();
+            batches = await OrganizerService.GetBatchesAsync();
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException)
+        {
+            actionError = exception.Message;
+            confirmingDeadlineChange = false;
+            batches = await OrganizerService.GetBatchesAsync();
         }
     }
 
@@ -356,6 +452,8 @@
     }
 
     private sealed class PartyFilters { public string? Search { get; set; } public InvitationStatus? Status { get; set; } public Guid? BatchId { get; set; } }
+    private sealed class BatchDraftModel { public string Name { get; set; } = string.Empty; public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); }
+    private sealed class DeadlineChangeModel { public Guid? BatchId { get; set; } public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); public string Reason { get; set; } = string.Empty; }
     private sealed class CorrectionModel
     {
         [Required] public string Name { get; set; } = string.Empty;
@@ -392,5 +490,12 @@
             SupportEmail = configuration.SupportEmail;
             AccessibilityTextLimit = configuration.AccessibilityTextLimit;
         }
+    }
+
+    private string FormatBatchDeadline(DateTimeOffset deadlineUtc)
+    {
+        if (dashboard?.Configuration is null) return deadlineUtc.ToString("u");
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(dashboard.Configuration.TimeZoneId);
+        return $"{TimeZoneInfo.ConvertTime(deadlineUtc, timeZone):f} ({dashboard.Configuration.TimeZoneId})";
     }
 }

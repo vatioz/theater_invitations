@@ -75,6 +75,7 @@ These are implementation directions, not permission to hard-code provider assump
 4. [Open decisions](04-open-decisions.md)
 5. [Implementation gaps](05-implementation-gaps.md)
 6. [Public RSVP experience](06-public-rsvp-experience.md)
+7. [Batch management](07-batch-management.md)
 
 ## Guiding Principles
 
