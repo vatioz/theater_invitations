@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
@@ -63,8 +64,10 @@ public sealed class OrganizerServiceTests
         var party = await AddPartyAsync(db);
         var service = CreateService(db);
 
-        await service.CorrectPartyAsync(party.Id, "Updated Guest", "updated@example.test", "Updated Co", 2, "Development Operator");
+        await service.CorrectPartyAsync(party.Id, party.Version, "Updated Guest", "updated@example.test", "Updated Co", 2);
 
+        db.ChangeTracker.Clear();
+        party = await db.InvitationParties.SingleAsync(x => x.Id == party.Id);
         Assert.Equal("Updated Guest", party.PrimaryGuestName);
         Assert.Equal("updated@example.test", party.Email);
         Assert.Equal(2, party.AllocatedSeats);
@@ -80,9 +83,11 @@ public sealed class OrganizerServiceTests
         var party = await AddPartyAsync(db);
         var service = CreateService(db);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => service.OverrideStatusAsync(party.Id, InvitationStatus.Confirmed, "", "Development ElevatedOperator"));
-        await service.OverrideStatusAsync(party.Id, InvitationStatus.Confirmed, "Approved exception", "Development ElevatedOperator");
+        await Assert.ThrowsAsync<ArgumentException>(() => service.OverrideStatusAsync(party.Id, party.Version, InvitationStatus.Confirmed, ""));
+        await service.OverrideStatusAsync(party.Id, party.Version, InvitationStatus.Confirmed, "Approved exception");
 
+        db.ChangeTracker.Clear();
+        party = await db.InvitationParties.SingleAsync(x => x.Id == party.Id);
         Assert.Equal(InvitationStatus.Confirmed, party.Status);
         var audit = await db.AuditEvents.SingleAsync();
         Assert.Equal(InvitationStatus.Pending, audit.PreviousStatus);
@@ -105,11 +110,31 @@ public sealed class OrganizerServiceTests
         Assert.Equal("Morgan Guest", result.Parties.Single().Name);
     }
 
+    [Fact]
+    public async Task Mutation_rejects_stale_version()
+    {
+        await using var db = CreateDb();
+        var party = await AddPartyAsync(db);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<StaleDataException>(() => service.CorrectPartyAsync(party.Id, party.Version + 1, "Updated", party.Email, null, 1));
+    }
+
+    [Fact]
+    public async Task Mutation_requires_service_level_authorization()
+    {
+        await using var db = CreateDb();
+        var party = await AddPartyAsync(db);
+        var service = CreateService(db, new DeniedAuthorization());
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, party.Email, null, 1));
+    }
+
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
-    private static OrganizerService CreateService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new FixedClock());
+    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null) => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
@@ -134,7 +159,18 @@ public sealed class OrganizerServiceTests
 
     private sealed class TestDbContextFactory(InvitationDbContext db) : IDbContextFactory<InvitationDbContext>
     {
-        public InvitationDbContext CreateDbContext() => db;
-        public Task<InvitationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(db);
+        private readonly DbContextOptions<InvitationDbContext> options = (DbContextOptions<InvitationDbContext>)db.GetService<IDbContextOptions>();
+        public InvitationDbContext CreateDbContext() => new(options);
+        public Task<InvitationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
+    }
+
+    private sealed class AllowedAuthorization : IOrganizerAuthorization
+    {
+        public Task<string> RequireAsync(string policy, CancellationToken cancellationToken = default) => Task.FromResult(policy == "ElevatedOperator" ? "Development ElevatedOperator" : "Development Operator");
+    }
+
+    private sealed class DeniedAuthorization : IOrganizerAuthorization
+    {
+        public Task<string> RequireAsync(string policy, CancellationToken cancellationToken = default) => throw new UnauthorizedAccessException();
     }
 }

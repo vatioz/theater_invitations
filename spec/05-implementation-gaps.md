@@ -16,10 +16,10 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| S1 | PostgreSQL concurrency tests | High | Open | Test concurrent confirms, imports, corrections, overrides, and seat increases against real PostgreSQL. Prove capacity cannot be exceeded. |
-| S2 | Retry transient transaction failures | Medium | Open | Retry a small bounded number of times when serializable PostgreSQL transactions conflict, then show a safe retry message. |
-| S3 | Stale update protection | Medium | Open | Do not silently overwrite a party changed in another organizer tab or guest session. Submit and validate PostgreSQL row versions. |
-| S4 | Server-enforced organizer authorization | High before deployment | Open | Services or protected endpoints must reject unauthorized callers even if UI role checks are bypassed. |
+| S1 | PostgreSQL concurrency tests | High | Completed | Testcontainers verifies concurrent guest confirms, imports, seat increases, and overrides cannot exceed capacity. |
+| S2 | Retry transient transaction failures | Medium | Completed | Capacity mutations retry serialization, deadlock, and EF concurrency conflicts up to three times with bounded jitter. |
+| S3 | Stale update protection | Medium | Completed | Guest and organizer forms submit PostgreSQL row versions; stale writes are rejected and the latest state is refreshed. |
+| S4 | Server-enforced organizer authorization | High before deployment | Completed | Organizer mutations enforce policies inside the application service and derive audit actors from the authenticated principal. |
 
 ## Organizer Authentication
 

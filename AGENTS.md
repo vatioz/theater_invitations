@@ -3,6 +3,7 @@
 ## Development
 
 - Use `dotnet restore TheaterInvitations.sln`, `dotnet build TheaterInvitations.sln --no-restore`, then `dotnet test TheaterInvitations.sln --no-build`.
+- The solution test command includes PostgreSQL Testcontainers integration tests and therefore requires a running Docker daemon.
 - The web project is `src/TheaterInvitations.Web`; database migrations use the locally pinned tool: `dotnet tool restore` then `dotnet tool run dotnet-ef database update --project src/TheaterInvitations.Web`.
 - Set `ConnectionStrings__Postgres` through user secrets or environment variables. `.env.example` is documentation only and is not loaded by the application.
 

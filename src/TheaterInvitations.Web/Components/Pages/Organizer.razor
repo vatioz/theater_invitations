@@ -22,6 +22,10 @@
     }
     else
     {
+        @if (!string.IsNullOrWhiteSpace(actionError))
+        {
+            <p class="validation-message" role="alert">@actionError</p>
+        }
         <section class="metrics" aria-label="Invitation metrics">
             <p><strong>@dashboard.ConfirmedSeats</strong> confirmed seats</p>
             <p><strong>@dashboard.ActivePendingSeats</strong> active pending seats</p>
@@ -103,7 +107,6 @@
                     <div><p class="eyebrow">Party administration</p><h2>Manage @selectedParty.Name</h2></div>
                     <button type="button" class="button-secondary" @onclick="CloseManage">Close</button>
                 </div>
-                @if (!string.IsNullOrWhiteSpace(actionError)) { <p class="validation-message">@actionError</p> }
                 <div class="manage-actions">
                 <AuthorizeView Roles="Operator,ElevatedOperator" Context="operatorAuth">
                     <Authorized>
@@ -178,9 +181,16 @@
         await RequireRoleAsync("Operator", "ElevatedOperator");
         if (preview is not null)
         {
-            await OrganizerService.CommitImportAsync(preview, "Imported batch");
-            preview = null;
-            await RefreshDashboardAsync();
+            try
+            {
+                await OrganizerService.CommitImportAsync(preview, "Imported batch");
+                preview = null;
+                await RefreshDashboardAsync();
+            }
+            catch (InvalidOperationException exception)
+            {
+                actionError = exception.Message;
+            }
         }
     }
 
@@ -189,9 +199,16 @@
         await RequireRoleAsync("ElevatedOperator");
         if (dashboard is not null)
         {
-            await OrganizerService.SetGlobalLockAsync(!dashboard.IsRsvpLocked);
-            confirmingLock = false;
-            await RefreshDashboardAsync();
+            try
+            {
+                await OrganizerService.SetGlobalLockAsync(!dashboard.IsRsvpLocked);
+                confirmingLock = false;
+                await RefreshDashboardAsync();
+            }
+            catch (InvalidOperationException exception)
+            {
+                actionError = exception.Message;
+            }
         }
     }
 
@@ -223,7 +240,8 @@
     private async Task CorrectAsync()
     {
         await RequireRoleAsync("Operator", "ElevatedOperator");
-        try { await OrganizerService.CorrectPartyAsync(selectedParty!.Id, correction.Name, correction.Email, correction.Company, correction.Seats, await ActorAsync()); CloseManage(); await RefreshDashboardAsync(); }
+        try { await OrganizerService.CorrectPartyAsync(selectedParty!.Id, selectedParty.Version, correction.Name, correction.Email, correction.Company, correction.Seats); CloseManage(); await RefreshDashboardAsync(); }
+        catch (StaleDataException exception) { actionError = exception.Message; selectedParty = null; await RefreshDashboardAsync(); }
         catch (ArgumentException exception) { actionError = exception.Message; }
         catch (InvalidOperationException exception) { actionError = exception.Message; }
     }
@@ -231,12 +249,11 @@
     private async Task OverrideAsync()
     {
         await RequireRoleAsync("ElevatedOperator");
-        try { await OrganizerService.OverrideStatusAsync(selectedParty!.Id, overrideModel.Status, overrideModel.Reason, await ActorAsync()); CloseManage(); await RefreshDashboardAsync(); }
+        try { await OrganizerService.OverrideStatusAsync(selectedParty!.Id, selectedParty.Version, overrideModel.Status, overrideModel.Reason); CloseManage(); await RefreshDashboardAsync(); }
+        catch (StaleDataException exception) { actionError = exception.Message; selectedParty = null; await RefreshDashboardAsync(); }
         catch (ArgumentException exception) { actionError = exception.Message; }
         catch (InvalidOperationException exception) { actionError = exception.Message; }
     }
-
-    private async Task<string> ActorAsync() => (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User.Identity?.Name ?? "Organizer";
 
     private void CloseManage()
     {

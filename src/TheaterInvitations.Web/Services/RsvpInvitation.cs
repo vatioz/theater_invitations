@@ -11,7 +11,8 @@ public sealed record RsvpInvitation(
     int AccessibilityTextLimit,
     InvitationStatus Status,
     bool IsLocked,
-    string? AccessibilityRequirements)
+    string? AccessibilityRequirements,
+    uint Version)
 {
     public bool IsExpired { get; init; }
 }

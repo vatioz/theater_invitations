@@ -29,7 +29,8 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
                 configuration.TimeZoneId,
                 configuration.SupportEmail,
                 configuration.AccessibilityTextLimit,
-                configuration.IsRsvpLocked
+                configuration.IsRsvpLocked,
+                party.Version
             }).SingleOrDefaultAsync(cancellationToken);
 
         if (invitation is null)
@@ -48,7 +49,8 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
             invitation.AccessibilityTextLimit,
             invitation.Status,
             invitation.IsRsvpLocked,
-            invitation.AccessibilityRequirements)
+            invitation.AccessibilityRequirements,
+            invitation.Version)
         {
             IsExpired = isExpired
         };
