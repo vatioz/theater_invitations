@@ -11,6 +11,10 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
     public DbSet<InvitationDraftRow> InvitationDraftRows => Set<InvitationDraftRow>();
     public DbSet<RsvpToken> RsvpTokens => Set<RsvpToken>();
     public DbSet<ProtectedDeliveryEnvelope> ProtectedDeliveryEnvelopes => Set<ProtectedDeliveryEnvelope>();
+    public DbSet<EmailSenderConfiguration> EmailSenderConfigurations => Set<EmailSenderConfiguration>();
+    public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
+    public DbSet<EmailCampaign> EmailCampaigns => Set<EmailCampaign>();
+    public DbSet<EmailDispatch> EmailDispatches => Set<EmailDispatch>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -86,6 +90,51 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.ActorCategory).HasMaxLength(50).IsRequired();
             entity.Property(x => x.CorrelationId).HasMaxLength(100).IsRequired();
             entity.Property(x => x.ReasonCategory).HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<EmailSenderConfiguration>(entity =>
+        {
+            entity.Property(x => x.FromDisplayName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.FromAddress).HasMaxLength(320).IsRequired();
+            entity.Property(x => x.ReplyToAddress).HasMaxLength(320).IsRequired();
+            entity.Property(x => x.VerifiedBy).HasMaxLength(200);
+            entity.Property(x => x.Version).IsRowVersion();
+        });
+
+        modelBuilder.Entity<EmailTemplate>(entity =>
+        {
+            entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.ContentDigest).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ApprovedBy).HasMaxLength(200);
+            entity.Property(x => x.Version).IsRowVersion();
+            entity.HasIndex(x => new { x.Type, x.VersionNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<EmailCampaign>(entity =>
+        {
+            entity.Property(x => x.TemplateDigest).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.FromDisplayName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.FromAddress).HasMaxLength(320).IsRequired();
+            entity.Property(x => x.ReplyToAddress).HasMaxLength(320).IsRequired();
+            entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Version).IsRowVersion();
+            entity.HasOne<InvitationBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<EmailTemplate>().WithMany().HasForeignKey(x => x.TemplateId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<EmailDispatch>(entity =>
+        {
+            entity.Property(x => x.RecipientEmail).HasMaxLength(320).IsRequired();
+            entity.Property(x => x.RecipientName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.ProviderMessageId).HasMaxLength(200);
+            entity.Property(x => x.FailureCategory).HasMaxLength(100);
+            entity.HasIndex(x => new { x.CampaignId, x.PartyId }).IsUnique();
+            entity.HasIndex(x => x.IdempotencyKey).IsUnique();
+            entity.HasOne<EmailCampaign>().WithMany().HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<RsvpToken>().WithMany().HasForeignKey(x => x.TokenId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

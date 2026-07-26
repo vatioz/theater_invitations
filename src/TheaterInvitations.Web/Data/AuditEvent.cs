@@ -12,6 +12,8 @@ public sealed class AuditEvent
     public string? ActorIdentifier { get; init; }
     public Guid? PartyId { get; init; }
     public Guid? BatchId { get; init; }
+    public Guid? EmailCampaignId { get; init; }
+    public Guid? EmailDispatchId { get; init; }
     public string CorrelationId { get; init; } = string.Empty;
     public string? ReasonCategory { get; init; }
     public InvitationStatus? PreviousStatus { get; init; }

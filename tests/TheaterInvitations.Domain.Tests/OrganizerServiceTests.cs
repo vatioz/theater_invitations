@@ -392,11 +392,58 @@ public sealed class OrganizerServiceTests
         Assert.Single(await db.ProtectedDeliveryEnvelopes.ToListAsync());
     }
 
+    [Fact]
+    public async Task Approved_template_and_verified_sender_prepare_one_dispatch_per_eligible_batch_party()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Email wave", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 2, TokenHash = RsvpService.HashToken("email-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, IssuedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(batch, party, token);
+        db.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = token.Id, ProtectedToken = new byte[] { 1 }, CreatedAtUtc = DateTimeOffset.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
+        await service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Join us", "<p>Hello</p>", "Hello"));
+        var template = Assert.Single(await service.GetTemplatesAsync());
+        await service.ApproveTemplateAsync(template.Id, template.Version);
+        var campaign = await service.PrepareInitialCampaignAsync(batch.Id, template.Id);
+
+        Assert.Equal(1, campaign.RecipientCount);
+        var dispatch = Assert.Single(await db.EmailDispatches.ToListAsync());
+        Assert.Equal(party.Id, dispatch.PartyId);
+        Assert.Equal(token.Id, dispatch.TokenId);
+        Assert.Equal(EmailDispatchState.Queued, dispatch.State);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "EmailCampaignPrepared" && x.EmailCampaignId == campaign.Id);
+    }
+
+    [Fact]
+    public async Task Campaign_list_projects_dispatch_counts()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Campaign batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var template = new EmailTemplate { Type = EmailTemplateType.InitialInvitation, VersionNumber = 1, Subject = "Subject", HtmlBody = "<p>Body</p>", PlainTextBody = "Body", State = EmailTemplateState.Approved, ContentDigest = "digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
+        var campaign = new EmailCampaign { BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = 1, TemplateDigest = "digest", FromDisplayName = "Theater", FromAddress = "events@theater.org", ReplyToAddress = "support@theater.org", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test", QueuedAtUtc = DateTimeOffset.UtcNow, State = EmailCampaignState.Queued };
+        db.AddRange(batch, template, campaign);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+
+        var campaigns = await service.GetCampaignsAsync();
+
+        var result = Assert.Single(campaigns);
+        Assert.Equal("Campaign batch", result.BatchName);
+        Assert.Equal(0, result.RecipientCount);
+    }
+
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
     private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName), new TestEnvelopeProtector());
+    private static EmailCampaignService CreateEmailService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new AllowedAuthorization(), new FixedClock(), new TransactionRetry());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
