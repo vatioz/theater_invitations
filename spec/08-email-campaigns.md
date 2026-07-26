@@ -64,16 +64,16 @@ The phases below are implementation gates. Do not skip a phase merely because pe
 
 | Phase | Status | Outcome | Required work |
 | --- | --- | --- | --- |
-| E0: Campaign foundation | In Progress | Sender settings, templates, campaigns, dispatch snapshots, and initial email workspace exist. | Correct UI defects and align campaign state semantics. |
-| E1: Review and rendering | Not Started | An organizer can safely inspect exactly what will be sent before queueing. | Campaign detail route, template placeholder contract, HTML/plain-text rendering and preview, controlled test send, and final confirmation. |
-| E2: Provider delivery | Not Started | Confirmed campaigns are sent safely through Resend. | `ResendEmailProvider`, protected API configuration, public base URL, persistent Data Protection keys, dispatch worker, durable claim/lease, idempotency, configurable quota, and accepted/failed status. |
-| E3: Delivery observability | Not Started | Organizers can understand campaign and party email state. | Campaign dispatch detail, party latest-status column/history, retry/re-send controls, and safe failure information. |
+| E0: Campaign foundation | Completed | Sender settings, templates, campaigns, dispatch snapshots, friendly UI labels, and initial email workspace exist. | None. |
+| E1: Review and rendering | In Progress | An organizer can safely inspect representative rendered content and explicitly queue a campaign. | Controlled provider-backed test send remains to be added. |
+| E2: Provider delivery | In Progress | An organizer can manually send a confirmed campaign sequentially through Resend and persist accepted/failed result per recipient. | Persistent production Data Protection keys, staging rehearsal, and party-level result UI remain. |
+| E3: Delivery observability | Completed | Organizers can understand campaign and party email state. | Campaign dispatch detail and party latest-status/history are implemented; resend controls remain E5 work. |
 | E4: Webhooks and suppression | Not Started | Provider delivery events affect future audience selection safely. | Verified webhook endpoint, idempotent event processing, delivered/bounce/complaint normalization, suppression records, and staging rehearsal. |
 | E5: Reminder and resend operations | Not Started | Operators can manually send reminders and normal resends within policy. | Active-pending reminder selection, one-reminder policy enforcement, normal resend using active link, and elevated token-regeneration resend flow. |
 
 ## Campaign State Machine
 
-Use these states consistently in persistence, UI, audit records, and worker behavior:
+Use these states consistently in persistence, UI, and audit records:
 
 ```text
 Draft -> ReadyForReview -> Queued -> Sending -> Completed
@@ -90,7 +90,7 @@ Draft -> ReadyForReview -> Queued -> Sending -> Completed
 - `Failed`: no dispatch completed successfully or the campaign cannot proceed due to a terminal configuration failure.
 - `Cancelled`: a reviewed, not-yet-sent campaign was explicitly cancelled. This requires confirmation and audit.
 
-The current E0 implementation uses `Queued` at preparation time. Correct this to `ReadyForReview` as part of E1 before a worker is introduced.
+Campaign preparation creates a `ReadyForReview` campaign. Only final confirmation transitions it to `Queued`.
 
 ## Sender Configuration
 
@@ -223,18 +223,17 @@ Show the latest delivery state and historical dispatches for that party. Offer:
 
 ## Delivery Execution
 
-Do not call Resend from a Blazor event handler. Campaign confirmation persists campaign and dispatch rows transactionally. A durable background worker processes queued dispatches.
+For this one-off event helper, sending is a manually triggered server-side campaign operation. Campaign confirmation persists campaign and dispatch rows transactionally; an explicit `Send campaign now` action then sends unresolved recipients sequentially. Do not send from client-side JavaScript.
 
-The worker must:
+The manual send operation must:
 
-1. Claim queued dispatches safely and honor the configured daily ceiling.
+1. Process unresolved recipients sequentially and stop before the configured daily ceiling is exceeded.
 2. Decrypt the protected token envelope only while rendering the individual message.
 3. Call the provider through a replaceable adapter.
 4. Use a stable provider idempotency key per campaign-party dispatch.
 5. Persist provider message ID and normalized state before moving to the next recipient.
-6. Retry transient network, timeout, server, and rate-limit failures with bounded backoff.
-7. Avoid automatic retry for permanent address failures, bounce, complaint, or suppression outcomes.
-8. Resume safely after worker or application restart.
+6. Mark transient and terminal failures as `Failed`; a later manual retry reuses the same idempotency key.
+7. Avoid automatic retry for any failure category in this one-off workflow.
 
 Use an interface such as:
 

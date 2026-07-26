@@ -31,10 +31,12 @@ builder.Services.AddScoped<RsvpService>();
 builder.Services.AddScoped<RsvpInvitationService>();
 builder.Services.AddScoped<OrganizerService>();
 builder.Services.AddScoped<EmailCampaignService>();
+builder.Services.AddSingleton<EmailTemplateRenderer>();
 builder.Services.AddScoped<IOrganizerAuthorization, OrganizerAuthorization>();
 builder.Services.AddSingleton<ITransactionRetry, TransactionRetry>();
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<IDeliveryEnvelopeProtector, DeliveryEnvelopeProtector>();
+builder.Services.AddHttpClient<IEmailProvider, ResendEmailProvider>();
 
 var app = builder.Build();
 

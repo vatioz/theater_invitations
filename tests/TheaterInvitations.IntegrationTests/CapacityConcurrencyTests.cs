@@ -180,5 +180,6 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
     private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
     {
         public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
+        public string Unprotect(byte[] protectedToken) => System.Text.Encoding.UTF8.GetString(protectedToken);
     }
 }

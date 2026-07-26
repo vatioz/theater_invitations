@@ -31,6 +31,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
             BatchName = x.batch.Name,
+            LatestEmailState = gridDb.EmailDispatches.Where(dispatch => dispatch.PartyId == x.party.Id).OrderByDescending(dispatch => dispatch.Id).Select(dispatch => (EmailDispatchState?)dispatch.State).FirstOrDefault(),
             Version = x.party.Version
         });
         var totalCount = await projected.CountAsync(request.CancellationToken);
@@ -76,6 +77,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
             BatchName = x.batch.Name,
+            LatestEmailState = db.EmailDispatches.Where(dispatch => dispatch.PartyId == x.party.Id).OrderByDescending(dispatch => dispatch.Id).Select(dispatch => (EmailDispatchState?)dispatch.State).FirstOrDefault(),
             Version = x.party.Version
         }).ToListAsync(cancellationToken);
         var reserved = await ReservedSeatsAsync(now, cancellationToken);
@@ -104,6 +106,15 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         await db.InvitationBatches.AsNoTracking()
             .OrderByDescending(x => x.CreatedAtUtc)
             .Select(x => new OrganizerBatch(x.Id, x.Name, x.DeadlineUtc, x.State, x.Version))
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<OrganizerEmailDispatch>> GetPartyEmailDispatchesAsync(Guid partyId, CancellationToken cancellationToken = default) =>
+        await (from dispatch in db.EmailDispatches.AsNoTracking()
+               join campaign in db.EmailCampaigns.AsNoTracking() on dispatch.CampaignId equals campaign.Id
+               join batch in db.InvitationBatches.AsNoTracking() on campaign.BatchId equals batch.Id
+               where dispatch.PartyId == partyId
+               orderby campaign.CreatedAtUtc descending
+               select new OrganizerEmailDispatch(batch.Name, campaign.Type, campaign.CreatedAtUtc, dispatch.State, dispatch.AttemptCount, dispatch.AcceptedAtUtc, dispatch.FailureCategory))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<OrganizerDraft>> GetDraftsAsync(CancellationToken cancellationToken = default) =>
@@ -569,6 +580,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
 public sealed record ImportRow(string Name, string Email, string? Company, int AllocatedSeats);
 public sealed record ImportPreview(IReadOnlyList<ImportRow> ValidRows, IReadOnlyList<string> Errors) { public int TotalSeats => ValidRows.Sum(x => x.AllocatedSeats); public bool IsValid => Errors.Count == 0; }
 public sealed record OrganizerBatch(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version);
+public sealed record OrganizerEmailDispatch(string BatchName, EmailCampaignType CampaignType, DateTimeOffset CampaignCreatedAtUtc, EmailDispatchState State, int AttemptCount, DateTimeOffset? AcceptedAtUtc, string? FailureCategory);
 internal sealed record CsvParseResult(IReadOnlyList<string[]> Rows, IReadOnlyList<string> Errors);
 internal sealed record DraftRowInput(int SourceRowNumber, string? Name, string? Email, string? Company, int? AllocatedSeats, string? Issue);
 internal sealed record DraftParseResult(IReadOnlyList<DraftRowInput> Rows, string? DocumentIssue) { public bool IsPrepared => DocumentIssue is null && Rows.Count > 0 && Rows.All(x => x.Issue is null); }
@@ -582,6 +594,7 @@ public sealed class OrganizerParty
     public int AllocatedSeats { get; init; }
     public InvitationStatus Status { get; init; }
     public string BatchName { get; init; } = string.Empty;
+    public EmailDispatchState? LatestEmailState { get; init; }
     public uint Version { get; init; }
 }
 public sealed class OrganizerAudit

@@ -1,0 +1,29 @@
+@page "/organizer/email/{CampaignId:guid}"
+@attribute [Authorize(Policy = "OrganizerViewer")]
+@rendermode InteractiveServer
+@using TheaterInvitations.Web.Data
+@using TheaterInvitations.Web.Services
+@inject EmailCampaignService EmailCampaignService
+
+<PageTitle>Campaign review</PageTitle>
+<main class="organizer-page">
+    <header><p class="eyebrow">Organizer</p><h1>Campaign review</h1><OrganizerNavigation /></header>
+    @if (campaign is null) { <p>Loading campaign...</p> }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }
+        <section class="rsvp-card"><div class="section-heading"><div><h2>Initial invitation for @campaign.BatchName</h2><p>Template v@campaign.TemplateVersionNumber. Sender: @campaign.FromDisplayName &lt;@campaign.FromAddress&gt;.</p></div><span class="draft-state">@FormatState(campaign.State)</span></div><dl class="configuration-summary"><div><dt>Reply-To</dt><dd>@campaign.ReplyToAddress</dd></div><div><dt>Recipients</dt><dd>@campaign.Dispatches.Count queued recipient snapshots</dd></div></dl>
+            <AuthorizeView Roles="Operator,ElevatedOperator" Context="confirmAuth"><Authorized>@if (campaign.State == EmailCampaignState.ReadyForReview) { @if (confirming) { <p class="notice">Queue this reviewed campaign? No email is sent until you use Send campaign now.</p><button @onclick="ConfirmAsync">Confirm and queue campaign</button> <button class="button-secondary" @onclick="(() => confirming = false)">Cancel</button> } else { <button @onclick="(() => confirming = true)">Confirm and queue campaign</button> } } else if (campaign.State is EmailCampaignState.Queued or EmailCampaignState.PartiallyFailed or EmailCampaignState.Failed) { @if (confirmingSend) { <p class="notice">Send all queued or failed recipients now? Accepted recipients will not be resent.</p><button @onclick="SendAsync">Send campaign now</button> <button class="button-secondary" @onclick="(() => confirmingSend = false)">Cancel</button> } else { <button @onclick="(() => confirmingSend = true)">@(campaign.State == EmailCampaignState.Queued ? "Send campaign now" : "Retry failed recipients")</button> } }</Authorized></AuthorizeView>
+        </section>
+        <section class="rsvp-card"><h2>Rendered preview</h2><p class="form-help">Preview uses representative data and a redacted RSVP link. It does not send email.</p><h3>@campaign.Preview.Subject</h3><div class="email-html-preview">@((MarkupString)campaign.Preview.HtmlBody)</div><h3>Plain text</h3><pre class="email-text-preview">@campaign.Preview.PlainTextBody</pre></section>
+        <section class="rsvp-card"><h2>Recipient snapshot</h2><div class="party-grid-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Seats</th><th>State</th><th>Attempts</th></tr></thead><tbody>@foreach (var dispatch in campaign.Dispatches) { <tr><td>@dispatch.RecipientName</td><td>@dispatch.RecipientEmail</td><td>@dispatch.AllocatedSeats</td><td>@dispatch.State</td><td>@dispatch.AttemptCount</td></tr> }</tbody></table></div></section>
+    }
+</main>
+@code {
+    [Parameter] public Guid CampaignId { get; set; }
+    private EmailCampaignDetail? campaign; private string? error; private bool confirming; private bool confirmingSend;
+    protected override async Task OnParametersSetAsync() => campaign = await EmailCampaignService.GetCampaignAsync(CampaignId);
+    private async Task ConfirmAsync() { if (campaign is null) return; try { await EmailCampaignService.ConfirmCampaignAsync(campaign.Id, campaign.Version); confirming = false; error = null; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; confirming = false; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } }
+    private async Task SendAsync() { if (campaign is null) return; try { await EmailCampaignService.SendCampaignAsync(campaign.Id, campaign.Version); confirmingSend = false; error = null; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; confirmingSend = false; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } }
+    private static string FormatState(EmailCampaignState state) => state == EmailCampaignState.ReadyForReview ? "Ready for review" : state.ToString();
+}

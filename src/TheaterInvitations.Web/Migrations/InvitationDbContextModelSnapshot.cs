@@ -77,7 +77,7 @@ namespace TheaterInvitations.Web.Migrations
                     b.HasIndex("TokenHash")
                         .IsUnique();
 
-                    b.ToTable("InvitationParties", t =>
+                    b.ToTable("InvitationParties", null, t =>
                         {
                             t.HasCheckConstraint("CK_InvitationParties_AllocatedSeats", "\"AllocatedSeats\" > 0");
                         });
@@ -142,7 +142,7 @@ namespace TheaterInvitations.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("AuditEvents");
+                    b.ToTable("AuditEvents", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.EmailCampaign", b =>
@@ -209,7 +209,7 @@ namespace TheaterInvitations.Web.Migrations
 
                     b.HasIndex("TemplateId");
 
-                    b.ToTable("EmailCampaigns");
+                    b.ToTable("EmailCampaigns", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.EmailDispatch", b =>
@@ -277,7 +277,7 @@ namespace TheaterInvitations.Web.Migrations
                     b.HasIndex("CampaignId", "PartyId")
                         .IsUnique();
 
-                    b.ToTable("EmailDispatches");
+                    b.ToTable("EmailDispatches", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.EmailSenderConfiguration", b =>
@@ -322,7 +322,7 @@ namespace TheaterInvitations.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("EmailSenderConfigurations");
+                    b.ToTable("EmailSenderConfigurations", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.EmailTemplate", b =>
@@ -384,7 +384,7 @@ namespace TheaterInvitations.Web.Migrations
                     b.HasIndex("Type", "VersionNumber")
                         .IsUnique();
 
-                    b.ToTable("EmailTemplates");
+                    b.ToTable("EmailTemplates", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.EventConfiguration", b =>
@@ -451,7 +451,7 @@ namespace TheaterInvitations.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("EventConfigurations");
+                    b.ToTable("EventConfigurations", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.InvitationBatch", b =>
@@ -508,7 +508,7 @@ namespace TheaterInvitations.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("InvitationBatches");
+                    b.ToTable("InvitationBatches", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.InvitationDraftRow", b =>
@@ -547,7 +547,7 @@ namespace TheaterInvitations.Web.Migrations
                     b.HasIndex("BatchId", "SourceRowNumber")
                         .IsUnique();
 
-                    b.ToTable("InvitationDraftRows");
+                    b.ToTable("InvitationDraftRows", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.ProtectedDeliveryEnvelope", b =>
@@ -581,7 +581,7 @@ namespace TheaterInvitations.Web.Migrations
                     b.HasIndex("TokenId")
                         .IsUnique();
 
-                    b.ToTable("ProtectedDeliveryEnvelopes");
+                    b.ToTable("ProtectedDeliveryEnvelopes", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.RsvpToken", b =>
@@ -623,7 +623,7 @@ namespace TheaterInvitations.Web.Migrations
                         .IsUnique()
                         .HasFilter("\"RevokedAtUtc\" IS NULL");
 
-                    b.ToTable("RsvpTokens");
+                    b.ToTable("RsvpTokens", (string)null);
                 });
 
             modelBuilder.Entity("TheaterInvitations.Web.Data.EmailCampaign", b =>

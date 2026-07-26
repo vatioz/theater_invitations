@@ -84,6 +84,9 @@ button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a744
 .party-filter-form input, .party-filter-form select { min-height: 2.5rem; padding: .45rem .55rem; border: 1px solid #a9a294; background: white; font: normal 1rem Arial, sans-serif; }
 .party-filter-form input { flex: 1 1 16rem; }
 .parties-page-card, .audit-page-card, .settings-card { width: 100%; }
+.email-history { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid #d8d1c4; }
+.email-html-preview { padding: 1rem; border: 1px solid #d8d1c4; background: white; overflow-wrap: anywhere; }
+.email-text-preview { margin: 0; padding: 1rem; overflow-x: auto; white-space: pre-wrap; border: 1px solid #d8d1c4; background: #faf7f0; font: .9rem/1.45 Arial, sans-serif; }
 .metrics { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); background: #d8d1c4; }
 .metrics p { margin: 0; padding: 1.2rem; background: #fffdf8; font-family: Arial, sans-serif; }
 .metrics strong { display: block; font-size: 2rem; color: #a74420; }

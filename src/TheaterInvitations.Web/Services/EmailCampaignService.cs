@@ -6,7 +6,7 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IOrganizerAuthorization authorization, IClock clock, ITransactionRetry retry)
+public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IOrganizerAuthorization authorization, IClock clock, ITransactionRetry retry, EmailTemplateRenderer renderer, IDeliveryEnvelopeProtector envelopeProtector, IEmailProvider emailProvider, IConfiguration configuration)
 {
     public async Task<EmailSenderSettings?> GetSenderSettingsAsync(CancellationToken cancellationToken = default)
     {
@@ -99,7 +99,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
                                     where party.BatchId == batchId && party.Status == InvitationStatus.Pending && rsvpToken.RevokedAtUtc == null
                                     select new { party, rsvpToken }).ToListAsync(token);
             if (recipients.Count == 0) throw new InvalidOperationException("The selected batch has no eligible invitation recipients.");
-            var campaign = new EmailCampaign { Type = EmailCampaignType.InitialInvitation, State = EmailCampaignState.Queued, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = clock.UtcNow };
+            var campaign = new EmailCampaign { Type = EmailCampaignType.InitialInvitation, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
             operationDb.EmailCampaigns.Add(campaign);
             foreach (var recipient in recipients)
             {
@@ -112,12 +112,98 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         }, cancellationToken);
     }
 
+    public async Task<EmailCampaignDetail?> GetCampaignAsync(Guid campaignId, CancellationToken cancellationToken = default)
+    {
+        var campaign = await (from item in db.EmailCampaigns.AsNoTracking()
+                              join batch in db.InvitationBatches.AsNoTracking() on item.BatchId equals batch.Id
+                              join template in db.EmailTemplates.AsNoTracking() on item.TemplateId equals template.Id
+                              join eventConfiguration in db.EventConfigurations.AsNoTracking() on 1 equals 1
+                              where item.Id == campaignId
+                              select new { item, batch, template, eventConfiguration }).SingleOrDefaultAsync(cancellationToken);
+        if (campaign is null) return null;
+        var dispatches = await db.EmailDispatches.AsNoTracking().Where(x => x.CampaignId == campaignId).OrderBy(x => x.RecipientName)
+            .Select(x => new EmailDispatchSummary(x.Id, x.RecipientName, x.RecipientEmail, x.AllocatedSeats, x.State, x.AttemptCount, x.FailureCategory, x.ProviderMessageId)).ToListAsync(cancellationToken);
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(campaign.eventConfiguration.TimeZoneId);
+        var sample = renderer.Render(campaign.template.Subject, campaign.template.HtmlBody, campaign.template.PlainTextBody, new EmailRenderData("Žaneta Guest", "2 seats for you and your guest", campaign.eventConfiguration.EventName, TimeZoneInfo.ConvertTime(campaign.eventConfiguration.StartsAtUtc, zone).ToString("D"), TimeZoneInfo.ConvertTime(campaign.eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(campaign.eventConfiguration.StartsAtUtc, zone).ToString("t"), campaign.eventConfiguration.VenueName, campaign.eventConfiguration.VenueAddress, TimeZoneInfo.ConvertTime(campaign.batch.DeadlineUtc, zone).ToString("f") + $" ({campaign.eventConfiguration.TimeZoneId})", "[private RSVP link]", campaign.eventConfiguration.SupportEmail));
+        return new EmailCampaignDetail(campaign.item.Id, campaign.item.Type, campaign.item.State, campaign.item.Version, campaign.batch.Name, campaign.template.VersionNumber, campaign.item.FromDisplayName, campaign.item.FromAddress, campaign.item.ReplyToAddress, dispatches, sample);
+    }
+
+    public async Task ConfirmCampaignAsync(Guid campaignId, uint expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        var campaign = await db.EmailCampaigns.SingleAsync(x => x.Id == campaignId, cancellationToken);
+        if (campaign.Version != expectedVersion) throw new StaleDataException("This campaign changed after you opened it. The current campaign has been loaded.");
+        if (campaign.State != EmailCampaignState.ReadyForReview) throw new InvalidOperationException("Only a review-ready campaign can be queued.");
+        campaign.State = EmailCampaignState.Queued;
+        campaign.QueuedAtUtc = clock.UtcNow;
+        AddAudit(db, "EmailCampaignQueued", "Accepted", actor, campaign.BatchId, campaign.Id, null);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task SendCampaignAsync(Guid campaignId, uint expectedVersion, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        var campaign = await db.EmailCampaigns.SingleAsync(x => x.Id == campaignId, cancellationToken);
+        if (campaign.Version != expectedVersion) throw new StaleDataException("This campaign changed after you opened it. The current campaign has been loaded.");
+        if (campaign.State is not (EmailCampaignState.Queued or EmailCampaignState.PartiallyFailed or EmailCampaignState.Failed)) throw new InvalidOperationException("Only queued or failed campaigns can be sent.");
+        var baseUrl = configuration.GetSection("PublicApp").Get<PublicAppOptions>()?.BaseUrl;
+        if (string.IsNullOrWhiteSpace(baseUrl)) throw new InvalidOperationException("Configure the public application base URL before sending a campaign.");
+        var sender = await db.EmailSenderConfigurations.SingleAsync(cancellationToken);
+        if (!sender.IsDomainVerified) throw new InvalidOperationException("Verify the sender domain before sending a campaign.");
+        var sentToday = await db.EmailDispatches.CountAsync(x => x.AcceptedAtUtc != null && x.AcceptedAtUtc.Value.UtcDateTime.Date == clock.UtcNow.UtcDateTime.Date, cancellationToken);
+        if (sentToday >= sender.DailySendCeiling) throw new InvalidOperationException("The configured daily send ceiling has been reached.");
+        campaign.State = EmailCampaignState.Sending;
+        await db.SaveChangesAsync(cancellationToken);
+
+        var dispatches = await db.EmailDispatches.Where(x => x.CampaignId == campaignId && (x.State == EmailDispatchState.Queued || x.State == EmailDispatchState.Failed)).OrderBy(x => x.RecipientName).ToListAsync(cancellationToken);
+        foreach (var dispatch in dispatches)
+        {
+            if (sentToday >= sender.DailySendCeiling) break;
+            var token = await db.RsvpTokens.SingleOrDefaultAsync(x => x.Id == dispatch.TokenId && x.RevokedAtUtc == null, cancellationToken);
+            var envelope = token is null ? null : await db.ProtectedDeliveryEnvelopes.SingleOrDefaultAsync(x => x.TokenId == token.Id, cancellationToken);
+            if (token is null || envelope is null)
+            {
+                dispatch.State = EmailDispatchState.Failed;
+                dispatch.FailureCategory = "token-unavailable";
+                await db.SaveChangesAsync(cancellationToken);
+                continue;
+            }
+            var template = await db.EmailTemplates.SingleAsync(x => x.Id == campaign.TemplateId, cancellationToken);
+            var eventConfiguration = await db.EventConfigurations.SingleAsync(cancellationToken);
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(eventConfiguration.TimeZoneId);
+            var rawToken = envelopeProtector.Unprotect(envelope.ProtectedToken);
+            var rsvpUrl = $"{baseUrl.TrimEnd('/')}/rsvp/{rawToken}";
+            var rendered = renderer.Render(template.Subject, template.HtmlBody, template.PlainTextBody, new EmailRenderData(dispatch.RecipientName, dispatch.AllocatedSeats == 1 ? "1 seat" : $"{dispatch.AllocatedSeats} seats for you and your guest", eventConfiguration.EventName, TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("D"), TimeZoneInfo.ConvertTime(eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("t"), eventConfiguration.VenueName, eventConfiguration.VenueAddress, TimeZoneInfo.ConvertTime(dispatch.DeadlineUtc, zone).ToString("f") + $" ({eventConfiguration.TimeZoneId})", rsvpUrl, eventConfiguration.SupportEmail));
+            dispatch.AttemptCount++;
+            var result = await emailProvider.SendAsync(new EmailProviderMessage($"{campaign.FromDisplayName} <{campaign.FromAddress}>", campaign.ReplyToAddress, dispatch.RecipientEmail, rendered.Subject, rendered.HtmlBody, rendered.PlainTextBody, dispatch.IdempotencyKey), cancellationToken);
+            if (result.IsAccepted)
+            {
+                dispatch.State = EmailDispatchState.Accepted;
+                dispatch.AcceptedAtUtc = clock.UtcNow;
+                dispatch.ProviderMessageId = result.ProviderMessageId;
+                dispatch.FailureCategory = null;
+                sentToday++;
+            }
+            else
+            {
+                dispatch.State = EmailDispatchState.Failed;
+                dispatch.FailureCategory = result.FailureCategory ?? (result.IsTransientFailure ? "provider-transient-failure" : "provider-rejected");
+            }
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        var states = await db.EmailDispatches.Where(x => x.CampaignId == campaignId).Select(x => x.State).ToListAsync(cancellationToken);
+        campaign.State = states.All(x => x == EmailDispatchState.Accepted) ? EmailCampaignState.Completed : states.Any(x => x == EmailDispatchState.Accepted) ? EmailCampaignState.PartiallyFailed : EmailCampaignState.Failed;
+        AddAudit(db, "EmailCampaignSent", "Accepted", actor, campaign.BatchId, campaign.Id, null);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     private static void ValidateTemplate(EmailTemplateInput input)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Subject);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.HtmlBody);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.PlainTextBody);
         if (input.Subject.Length > 300) throw new ArgumentException("Email subject must be 300 characters or fewer.");
+        EmailTemplateRenderer.Validate(input.Subject, input.HtmlBody, input.PlainTextBody);
     }
 
     private static string Digest(EmailTemplateInput input) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{input.Type}\n{input.Subject}\n{input.HtmlBody}\n{input.PlainTextBody}")));
@@ -129,3 +215,5 @@ public sealed record EmailSenderSettingsInput(string FromDisplayName, string Fro
 public sealed record EmailTemplateInput(EmailTemplateType Type, string Subject, string HtmlBody, string PlainTextBody);
 public sealed record EmailTemplateSummary(Guid Id, EmailTemplateType Type, int VersionNumber, string Subject, EmailTemplateState State, uint Version);
 public sealed record EmailCampaignSummary(Guid Id, EmailCampaignType Type, EmailCampaignState State, string BatchName, int TemplateVersionNumber, DateTimeOffset CreatedAtUtc, int RecipientCount, int AcceptedCount, int FailedCount, uint Version);
+public sealed record EmailDispatchSummary(Guid Id, string RecipientName, string RecipientEmail, int AllocatedSeats, EmailDispatchState State, int AttemptCount, string? FailureCategory, string? ProviderMessageId);
+public sealed record EmailCampaignDetail(Guid Id, EmailCampaignType Type, EmailCampaignState State, uint Version, string BatchName, int TemplateVersionNumber, string FromDisplayName, string FromAddress, string ReplyToAddress, IReadOnlyList<EmailDispatchSummary> Dispatches, EmailRenderResult Preview);
