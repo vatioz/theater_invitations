@@ -114,7 +114,7 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
     private OrganizerService CreateOrganizerService()
     {
         var db = database.CreateDbContext();
-        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(), new TestEnvelopeProtector());
+        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment());
     }
 
     private async Task<List<InvitationParty>> SeedPendingPartiesAsync(int capacity, int count)
@@ -176,10 +176,5 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
         public string ApplicationName { get; set; } = "Tests";
         public string ContentRootPath { get; set; } = string.Empty;
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
-    }
-    private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
-    {
-        public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
-        public string Unprotect(byte[] protectedToken) => System.Text.Encoding.UTF8.GetString(protectedToken);
     }
 }

@@ -10,7 +10,7 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment, IDeliveryEnvelopeProtector envelopeProtector)
+public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment)
 {
     public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
     {
@@ -205,9 +205,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
                 var hash = RsvpService.HashToken(rawToken);
                 var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.PrimaryGuestName!, Email = row.Email!, Company = row.Company, AllocatedSeats = row.AllocatedSeats!.Value, TokenHash = hash };
                 operationDb.InvitationParties.Add(party);
-                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, RawToken = rawToken, IssuedAtUtc = clock.UtcNow };
                 operationDb.RsvpTokens.Add(rsvpToken);
-                operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = rsvpToken.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
             }
 
             batch.State = InvitationBatchState.Committed; batch.CommittedAtUtc = clock.UtcNow; batch.CommittedBy = actor; batch.ModifiedAtUtc = clock.UtcNow; batch.ModifiedBy = actor;
@@ -264,9 +263,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             var rawToken = CreateRawToken();
             var hash = RsvpService.HashToken(rawToken);
             party.TokenHash = hash;
-            var replacement = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+            var replacement = new RsvpToken { PartyId = party.Id, Hash = hash, RawToken = rawToken, IssuedAtUtc = clock.UtcNow };
             operationDb.RsvpTokens.Add(replacement);
-            operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = replacement.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
             AddAudit(operationDb, "RsvpTokenRegenerated", "Accepted", null, party.Id, actor, reason);
             await operationDb.SaveChangesAsync(token);
             if (transaction is not null) await transaction.CommitAsync(token);
@@ -421,9 +419,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
                 var hash = RsvpService.HashToken(rawToken);
                 var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, TokenHash = hash };
                 operationDb.InvitationParties.Add(party);
-                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, RawToken = rawToken, IssuedAtUtc = clock.UtcNow };
                 operationDb.RsvpTokens.Add(rsvpToken);
-                operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = rsvpToken.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
             }
             AddAudit(operationDb, "BatchImported", "Accepted", batch.Id, null, actor, null);
             await operationDb.SaveChangesAsync(token);

@@ -327,7 +327,7 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
-    public async Task Committing_a_prepared_draft_creates_party_token_and_delivery_envelope_together()
+    public async Task Committing_a_prepared_draft_creates_party_token_with_raw_send_material()
     {
         await using var db = CreateDb();
         await SeedConfigurationAsync(db, 10);
@@ -340,10 +340,9 @@ public sealed class OrganizerServiceTests
         Assert.Equal(InvitationBatchState.Committed, batch.State);
         var party = await db.InvitationParties.SingleAsync();
         var token = await db.RsvpTokens.SingleAsync();
-        var envelope = await db.ProtectedDeliveryEnvelopes.SingleAsync();
         Assert.Equal(party.Id, token.PartyId);
         Assert.Equal(party.TokenHash, token.Hash);
-        Assert.Equal(token.Id, envelope.TokenId);
+        Assert.NotNull(token.RawToken);
         Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchCommitted" && x.Outcome == "Accepted");
     }
 
@@ -390,7 +389,7 @@ public sealed class OrganizerServiceTests
         Assert.Null(replacement.RevokedAtUtc);
         Assert.NotEqual(revoked.Hash, replacement.Hash);
         Assert.Equal(replacement.Hash, (await db.InvitationParties.SingleAsync()).TokenHash);
-        Assert.Single(await db.ProtectedDeliveryEnvelopes.ToListAsync());
+        Assert.NotNull((await db.RsvpTokens.SingleAsync(x => x.Id != original.Id)).RawToken);
     }
 
     [Fact]
@@ -400,9 +399,8 @@ public sealed class OrganizerServiceTests
         await SeedConfigurationAsync(db, 10);
         var batch = new InvitationBatch { Name = "Email wave", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
         var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 2, TokenHash = RsvpService.HashToken("email-token") };
-        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, IssuedAtUtc = DateTimeOffset.UtcNow };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "email-token", IssuedAtUtc = DateTimeOffset.UtcNow };
         db.AddRange(batch, party, token);
-        db.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = token.Id, ProtectedToken = new byte[] { 1 }, CreatedAtUtc = DateTimeOffset.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
         await db.SaveChangesAsync();
         var service = CreateEmailService(db);
 
@@ -447,9 +445,8 @@ public sealed class OrganizerServiceTests
         await SeedConfigurationAsync(db, 10);
         var batch = new InvitationBatch { Name = "Review batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
         var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("review-token") };
-        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, IssuedAtUtc = DateTimeOffset.UtcNow };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "review-token", IssuedAtUtc = DateTimeOffset.UtcNow };
         db.AddRange(batch, party, token);
-        db.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = token.Id, ProtectedToken = new byte[] { 1 }, CreatedAtUtc = DateTimeOffset.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
         await db.SaveChangesAsync();
         var service = CreateEmailService(db);
         await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
@@ -490,7 +487,7 @@ public sealed class OrganizerServiceTests
         await SeedConfigurationAsync(db, 10);
         var batch = new InvitationBatch { Name = "Email history batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
         var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("history-token") };
-        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, IssuedAtUtc = DateTimeOffset.UtcNow };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "history-token", IssuedAtUtc = DateTimeOffset.UtcNow };
         var template = new EmailTemplate { Type = EmailTemplateType.InitialInvitation, VersionNumber = 1, Subject = "Subject", HtmlBody = "<p>Body</p>", PlainTextBody = "Body", State = EmailTemplateState.Approved, ContentDigest = "digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
         var campaign = new EmailCampaign { BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = 1, TemplateDigest = "digest", FromDisplayName = "Theater", FromAddress = "events@theater.org", ReplyToAddress = "support@theater.org", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test", QueuedAtUtc = DateTimeOffset.UtcNow, State = EmailCampaignState.Completed };
         var dispatch = new EmailDispatch { CampaignId = campaign.Id, PartyId = party.Id, TokenId = token.Id, RecipientEmail = party.Email, RecipientName = party.PrimaryGuestName, AllocatedSeats = 1, DeadlineUtc = batch.DeadlineUtc, IdempotencyKey = "history/dispatch", State = EmailDispatchState.Accepted, AttemptCount = 1, AcceptedAtUtc = DateTimeOffset.UtcNow, ProviderMessageId = "provider-id" };
@@ -505,12 +502,32 @@ public sealed class OrganizerServiceTests
         Assert.Null(result.FailureCategory);
     }
 
+    [Fact]
+    public async Task Reminder_campaign_allows_each_active_pending_party_once()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Reminder batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("reminder-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "reminder-token", IssuedAtUtc = DateTimeOffset.UtcNow };
+        var template = new EmailTemplate { Type = EmailTemplateType.Reminder, VersionNumber = 1, Subject = "Reminder", HtmlBody = "<p>Reminder</p>", PlainTextBody = "Reminder", State = EmailTemplateState.Approved, ContentDigest = "reminder-digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
+        db.AddRange(batch, party, token, template);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
+
+        var campaign = await service.PrepareReminderCampaignAsync(batch.Id, template.Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PrepareReminderCampaignAsync(batch.Id, template.Id));
+
+        Assert.Equal(1, campaign.RecipientCount);
+    }
+
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
-    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName), new TestEnvelopeProtector());
-    private static EmailCampaignService CreateEmailService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new AllowedAuthorization(), new FixedClock(), new TransactionRetry(), new EmailTemplateRenderer(), new TestEnvelopeProtector(), new AcceptedEmailProvider(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["PublicApp:BaseUrl"] = "https://rsvp.example.org" }).Build());
+    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
+    private static EmailCampaignService CreateEmailService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new AllowedAuthorization(), new FixedClock(), new TransactionRetry(), new EmailTemplateRenderer(), new AcceptedEmailProvider(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["PublicApp:BaseUrl"] = "https://rsvp.example.org" }).Build());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
@@ -569,11 +586,6 @@ public sealed class OrganizerServiceTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
-    private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
-    {
-        public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
-        public string Unprotect(byte[] protectedToken) => System.Text.Encoding.UTF8.GetString(protectedToken);
-    }
 
     private sealed class AcceptedEmailProvider : IEmailProvider
     {

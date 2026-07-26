@@ -10,7 +10,6 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
     public DbSet<InvitationParty> InvitationParties => Set<InvitationParty>();
     public DbSet<InvitationDraftRow> InvitationDraftRows => Set<InvitationDraftRow>();
     public DbSet<RsvpToken> RsvpTokens => Set<RsvpToken>();
-    public DbSet<ProtectedDeliveryEnvelope> ProtectedDeliveryEnvelopes => Set<ProtectedDeliveryEnvelope>();
     public DbSet<EmailSenderConfiguration> EmailSenderConfigurations => Set<EmailSenderConfiguration>();
     public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
     public DbSet<EmailCampaign> EmailCampaigns => Set<EmailCampaign>();
@@ -67,20 +66,12 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
         modelBuilder.Entity<RsvpToken>(entity =>
         {
             entity.Property(x => x.Hash).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RawToken).HasMaxLength(128);
             entity.Property(x => x.RevocationReasonCategory).HasMaxLength(100);
             entity.Property(x => x.Version).IsRowVersion();
             entity.HasIndex(x => x.Hash).IsUnique();
             entity.HasIndex(x => x.PartyId).HasFilter("\"RevokedAtUtc\" IS NULL").IsUnique();
             entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<ProtectedDeliveryEnvelope>(entity =>
-        {
-            entity.Property(x => x.ProtectedToken).IsRequired();
-            entity.Property(x => x.ProtectionPurpose).HasMaxLength(200).IsRequired();
-            entity.HasIndex(x => x.TokenId).IsUnique();
-            entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne<RsvpToken>().WithMany().HasForeignKey(x => x.TokenId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AuditEvent>(entity =>
