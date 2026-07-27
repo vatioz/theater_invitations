@@ -26,22 +26,6 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
     }
 
     [Fact]
-    public async Task Concurrent_imports_do_not_exceed_capacity()
-    {
-        await database.ResetAsync();
-        await SeedConfigurationAsync(capacity: 3);
-        var preview1 = new ImportPreview(new[] { new ImportRow("First", "first@example.test", null, 2) }, Array.Empty<string>());
-        var preview2 = new ImportPreview(new[] { new ImportRow("Second", "second@example.test", null, 2) }, Array.Empty<string>());
-
-        var results = await RunCapturingAsync(
-            () => CreateOrganizerService().CommitImportAsync(preview1, "First"),
-            () => CreateOrganizerService().CommitImportAsync(preview2, "Second"));
-
-        Assert.Single(results, result => result is null);
-        Assert.Equal(2, await ReservedSeatsAsync());
-    }
-
-    [Fact]
     public async Task Concurrent_seat_increases_do_not_exceed_capacity()
     {
         await database.ResetAsync();

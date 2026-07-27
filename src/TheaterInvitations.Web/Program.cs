@@ -18,7 +18,7 @@ if (builder.Environment.IsDevelopment())
 }
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("OrganizerViewer", policy => policy.RequireRole("Viewer", "Operator", "ElevatedOperator"));
+    options.AddPolicy("OrganizerViewer", policy => policy.RequireRole("Operator", "ElevatedOperator"));
     options.AddPolicy("OrganizerOperator", policy => policy.RequireRole("Operator", "ElevatedOperator"));
     options.AddPolicy("ElevatedOperator", policy => policy.RequireRole("ElevatedOperator"));
 });
@@ -71,7 +71,7 @@ if (app.Environment.IsDevelopment())
 {
     app.MapGet("/dev/login/{role}", async (string role, HttpContext context) =>
     {
-        var allowedRoles = new[] { "Viewer", "Operator", "ElevatedOperator" };
+        var allowedRoles = new[] { "Operator", "ElevatedOperator" };
         if (!allowedRoles.Contains(role, StringComparer.Ordinal))
         {
             return Results.NotFound();
