@@ -20,7 +20,7 @@ public sealed class PostgreSqlFixture : IAsyncLifetime, IDbContextFactory<Invita
     public async Task ResetAsync()
     {
         await using var db = CreateDbContext();
-        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"AuditEvents\", \"InvitationParties\", \"InvitationBatches\", \"InvitationDraftRows\", \"RsvpTokens\", \"ProtectedDeliveryEnvelopes\", \"EventConfigurations\" CASCADE");
+        await db.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"AuditEvents\", \"EmailDispatches\", \"EmailCampaigns\", \"EmailTemplates\", \"EmailSenderConfigurations\", \"InvitationParties\", \"InvitationBatches\", \"InvitationDraftRows\", \"RsvpTokens\", \"EventConfigurations\" CASCADE");
     }
 
     public InvitationDbContext CreateDbContext() => new(options);

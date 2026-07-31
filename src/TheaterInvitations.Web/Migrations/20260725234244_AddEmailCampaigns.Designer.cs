@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TheaterInvitations.Web.Data;
@@ -11,9 +12,11 @@ using TheaterInvitations.Web.Data;
 namespace TheaterInvitations.Web.Migrations
 {
     [DbContext(typeof(InvitationDbContext))]
-    partial class InvitationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260725234244_AddEmailCampaigns")]
+    partial class AddEmailCampaigns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -550,6 +553,40 @@ namespace TheaterInvitations.Web.Migrations
                     b.ToTable("InvitationDraftRows");
                 });
 
+            modelBuilder.Entity("TheaterInvitations.Web.Data.ProtectedDeliveryEnvelope", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("PartyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("ProtectedToken")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ProtectionPurpose")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("TokenId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PartyId");
+
+                    b.HasIndex("TokenId")
+                        .IsUnique();
+
+                    b.ToTable("ProtectedDeliveryEnvelopes");
+                });
+
             modelBuilder.Entity("TheaterInvitations.Web.Data.RsvpToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -566,10 +603,6 @@ namespace TheaterInvitations.Web.Migrations
 
                     b.Property<Guid>("PartyId")
                         .HasColumnType("uuid");
-
-                    b.Property<string>("RawToken")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
 
                     b.Property<string>("RevocationReasonCategory")
                         .HasMaxLength(100)
@@ -637,6 +670,21 @@ namespace TheaterInvitations.Web.Migrations
                     b.HasOne("TheaterInvitations.Web.Data.InvitationBatch", null)
                         .WithMany()
                         .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TheaterInvitations.Web.Data.ProtectedDeliveryEnvelope", b =>
+                {
+                    b.HasOne("TheaterInvitations.Domain.InvitationParty", null)
+                        .WithMany()
+                        .HasForeignKey("PartyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TheaterInvitations.Web.Data.RsvpToken", null)
+                        .WithMany()
+                        .HasForeignKey("TokenId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

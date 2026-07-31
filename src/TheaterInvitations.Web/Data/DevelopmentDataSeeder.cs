@@ -42,7 +42,7 @@ public static class DevelopmentDataSeeder
             CreatedAtUtc = nowUtc
         };
         db.InvitationBatches.Add(batch);
-        db.InvitationParties.Add(new InvitationParty
+        var party = new InvitationParty
         {
             BatchId = batch.Id,
             PrimaryGuestName = "Alex Guest",
@@ -50,7 +50,9 @@ public static class DevelopmentDataSeeder
             Company = "Development Theater",
             AllocatedSeats = 2,
             TokenHash = tokenHash
-        });
+        };
+        db.InvitationParties.Add(party);
+        db.RsvpTokens.Add(new RsvpToken { PartyId = party.Id, Hash = tokenHash, RawToken = TestRsvpToken, IssuedAtUtc = nowUtc });
         await db.SaveChangesAsync(cancellationToken);
     }
 }

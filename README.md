@@ -43,7 +43,6 @@ In Development, the application idempotently seeds one party after migrations. O
 
 Development provides local-only cookie login personas. Open one of these URLs, then go to `/organizer`:
 
-- `https://localhost:7238/dev/login/Viewer` for read-only dashboard and audit access.
 - `https://localhost:7238/dev/login/Operator` for CSV preview and import.
 - `https://localhost:7238/dev/login/ElevatedOperator` for global RSVP lock changes.
 

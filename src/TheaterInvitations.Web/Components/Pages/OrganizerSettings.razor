@@ -5,6 +5,7 @@
 @using TheaterInvitations.Web.Data
 @using TheaterInvitations.Web.Services
 @inject OrganizerService OrganizerService
+@inject EmailCampaignService EmailCampaignService
 
 <PageTitle>Event settings</PageTitle>
 
@@ -46,12 +47,35 @@
                 <NotAuthorized><p>You have read-only access to event configuration.</p></NotAuthorized>
             </AuthorizeView>
         </section>
+        <section class="rsvp-card settings-card">
+            <h2>Email sender settings</h2>
+            <p>Configure the sender identity used for future campaigns. The Resend API key remains a protected deployment secret and is not shown here.</p>
+            <AuthorizeView Roles="ElevatedOperator" Context="emailSettingsAuth">
+                <Authorized>
+                    <EditForm Model="emailModel" OnValidSubmit="SaveEmailSettingsAsync" FormName="email-sender-settings" class="manage-form settings-form">
+                        <DataAnnotationsValidator /><ValidationSummary />
+                        <label>From display name <InputText @bind-Value="emailModel.FromDisplayName" /></label>
+                        <label>From address <InputText @bind-Value="emailModel.FromAddress" /></label>
+                        <label>Reply-To address <InputText @bind-Value="emailModel.ReplyToAddress" /></label>
+                        <label>Daily send ceiling <InputNumber @bind-Value="emailModel.DailySendCeiling" /></label>
+                        <label class="checkbox-label"><InputCheckbox @bind-Value="emailModel.IsDomainVerified" /> I have verified this sender domain in Resend.</label>
+                        <button type="submit">Save email sender settings</button>
+                    </EditForm>
+                </Authorized>
+                <NotAuthorized>
+                    @if (emailSettings is null) { <p>Sender settings are not configured.</p> }
+                    else { <p>Sender: @emailSettings.FromDisplayName &lt;@emailSettings.FromAddress&gt;, Reply-To: @emailSettings.ReplyToAddress, daily ceiling: @emailSettings.DailySendCeiling.</p> }
+                </NotAuthorized>
+            </AuthorizeView>
+        </section>
     }
 </main>
 
 @code {
     private OrganizerDashboard? dashboard;
     private readonly EventConfigurationModel model = new();
+    private readonly EmailSenderSettingsModel emailModel = new();
+    private EmailSenderSettings? emailSettings;
     private string? error;
     protected override async Task OnInitializedAsync() => await RefreshAsync();
     private async Task SaveAsync()
@@ -59,7 +83,12 @@
         try { await OrganizerService.SaveEventConfigurationAsync(model.ToInput(), dashboard!.Configuration?.Version); error = null; await RefreshAsync(); }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException) { error = exception.Message; }
     }
-    private async Task RefreshAsync() { dashboard = await OrganizerService.GetDashboardAsync(); model.Load(dashboard.Configuration); }
+    private async Task SaveEmailSettingsAsync()
+    {
+        try { await EmailCampaignService.SaveSenderSettingsAsync(new EmailSenderSettingsInput(emailModel.FromDisplayName, emailModel.FromAddress, emailModel.ReplyToAddress, emailModel.DailySendCeiling, emailModel.IsDomainVerified), emailSettings?.Version); error = null; await RefreshAsync(); }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException) { error = exception.Message; }
+    }
+    private async Task RefreshAsync() { dashboard = await OrganizerService.GetDashboardAsync(); model.Load(dashboard.Configuration); emailSettings = await EmailCampaignService.GetSenderSettingsAsync(); emailModel.Load(emailSettings); }
     private sealed class EventConfigurationModel
     {
         public int Capacity { get; set; } = 340; public string EventName { get; set; } = string.Empty; public DateTime DoorsLocal { get; set; } = DateTime.Today.AddHours(18); public DateTime StartsLocal { get; set; } = DateTime.Today.AddHours(19); public string VenueName { get; set; } = string.Empty; public string VenueAddress { get; set; } = string.Empty; public string? DressCode { get; set; } public string TimeZoneId { get; set; } = "Europe/Prague"; public string? SupportEmail { get; set; } public int AccessibilityTextLimit { get; set; } = 500;
@@ -68,5 +97,14 @@
         {
             if (configuration is null) return; Capacity = configuration.Capacity; EventName = configuration.EventName; var zone = TimeZoneInfo.FindSystemTimeZoneById(configuration.TimeZoneId); if (configuration.DoorsAtUtc != default) DoorsLocal = TimeZoneInfo.ConvertTime(configuration.DoorsAtUtc, zone).DateTime; if (configuration.StartsAtUtc != default) StartsLocal = TimeZoneInfo.ConvertTime(configuration.StartsAtUtc, zone).DateTime; VenueName = configuration.VenueName; VenueAddress = configuration.VenueAddress; DressCode = configuration.DressCode; TimeZoneId = configuration.TimeZoneId; SupportEmail = configuration.SupportEmail; AccessibilityTextLimit = configuration.AccessibilityTextLimit;
         }
+    }
+    private sealed class EmailSenderSettingsModel
+    {
+        [Required] public string FromDisplayName { get; set; } = string.Empty;
+        [Required, EmailAddress] public string FromAddress { get; set; } = string.Empty;
+        [Required, EmailAddress] public string ReplyToAddress { get; set; } = string.Empty;
+        [Range(1, int.MaxValue)] public int DailySendCeiling { get; set; } = 100;
+        public bool IsDomainVerified { get; set; }
+        public void Load(EmailSenderSettings? settings) { if (settings is null) return; FromDisplayName = settings.FromDisplayName; FromAddress = settings.FromAddress; ReplyToAddress = settings.ReplyToAddress; DailySendCeiling = settings.DailySendCeiling; IsDomainVerified = settings.IsDomainVerified; }
     }
 }

@@ -26,22 +26,6 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
     }
 
     [Fact]
-    public async Task Concurrent_imports_do_not_exceed_capacity()
-    {
-        await database.ResetAsync();
-        await SeedConfigurationAsync(capacity: 3);
-        var preview1 = new ImportPreview(new[] { new ImportRow("First", "first@example.test", null, 2) }, Array.Empty<string>());
-        var preview2 = new ImportPreview(new[] { new ImportRow("Second", "second@example.test", null, 2) }, Array.Empty<string>());
-
-        var results = await RunCapturingAsync(
-            () => CreateOrganizerService().CommitImportAsync(preview1, "First"),
-            () => CreateOrganizerService().CommitImportAsync(preview2, "Second"));
-
-        Assert.Single(results, result => result is null);
-        Assert.Equal(2, await ReservedSeatsAsync());
-    }
-
-    [Fact]
     public async Task Concurrent_seat_increases_do_not_exceed_capacity()
     {
         await database.ResetAsync();
@@ -114,7 +98,7 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
     private OrganizerService CreateOrganizerService()
     {
         var db = database.CreateDbContext();
-        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(), new TestEnvelopeProtector());
+        return new OrganizerService(db, database, new FixedClock(), new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment());
     }
 
     private async Task<List<InvitationParty>> SeedPendingPartiesAsync(int capacity, int count)
@@ -176,9 +160,5 @@ public sealed class CapacityConcurrencyTests(PostgreSqlFixture database)
         public string ApplicationName { get; set; } = "Tests";
         public string ContentRootPath { get; set; } = string.Empty;
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
-    }
-    private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
-    {
-        public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
     }
 }

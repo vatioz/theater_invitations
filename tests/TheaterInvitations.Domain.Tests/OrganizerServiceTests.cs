@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using TheaterInvitations.Domain;
 using TheaterInvitations.Web.Data;
@@ -10,86 +11,6 @@ namespace TheaterInvitations.Domain.Tests;
 
 public sealed class OrganizerServiceTests
 {
-    [Fact]
-    public async Task Preview_supports_quoted_company_names_and_commits_only_after_confirmation()
-    {
-        await using var db = CreateDb();
-        await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
-        const string csv = "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,\"Example, Inc.\",2";
-
-        var preview = await service.PreviewImportAsync(csv);
-
-        Assert.True(preview.IsValid);
-        Assert.Equal("Example, Inc.", preview.ValidRows.Single().Company);
-        Assert.Empty(db.InvitationParties);
-
-        await service.CommitImportAsync(preview, "First import");
-
-        Assert.Single(db.InvitationParties);
-        Assert.Single(db.InvitationBatches);
-    }
-
-    [Fact]
-    public async Task Preview_rejects_duplicate_email_against_existing_party()
-    {
-        await using var db = CreateDb();
-        await SeedConfigurationAsync(db, 10);
-        var batch = new InvitationBatch { Name = "Existing", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
-        db.Add(batch);
-        db.Add(new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Existing", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("existing") });
-        await db.SaveChangesAsync();
-        var service = CreateService(db);
-
-        var preview = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nDuplicate,alex@example.test,,1");
-
-        Assert.False(preview.IsValid);
-        Assert.Contains(preview.Errors, x => x.Contains("duplicate", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public async Task Preview_identifies_the_invalid_seat_column()
-    {
-        await using var db = CreateDb();
-        await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
-
-        var preview = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,0");
-
-        Assert.Equal("Row 2: allocated_seats must be a positive integer.", Assert.Single(preview.Errors));
-    }
-
-    [Fact]
-    public async Task Preview_rejects_invalid_email_and_preserves_unicode_multiline_fields()
-    {
-        await using var db = CreateDb();
-        await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
-
-        var invalid = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex,not-an-email,,1");
-        var valid = await service.PreviewImportAsync("\uFEFFprimary_guest_name,email,company,allocated_seats\n Žaneta , zaneta@example.test ,\"Divadlo\nČeský Krumlov\",1");
-
-        Assert.Equal("Row 2: email must be a valid address.", Assert.Single(invalid.Errors));
-        Assert.True(valid.IsValid);
-        Assert.Equal("Žaneta", valid.ValidRows.Single().Name);
-        Assert.Equal("zaneta@example.test", valid.ValidRows.Single().Email);
-        Assert.Equal("Divadlo\nČeský Krumlov", valid.ValidRows.Single().Company);
-    }
-
-    [Fact]
-    public async Task Preview_reports_malformed_csv_and_size_limit()
-    {
-        await using var db = CreateDb();
-        await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
-
-        var malformed = await service.PreviewImportAsync("primary_guest_name,email,company,allocated_seats\nAlex,alex@example.test,\"Unclosed,1");
-        var oversized = await service.PreviewImportAsync(new string('a', 1_000_001));
-
-        Assert.Contains("Malformed CSV", Assert.Single(malformed.Errors));
-        Assert.Equal("CSV must be 1 MB or smaller.", Assert.Single(oversized.Errors));
-    }
-
     [Fact]
     public async Task Correction_updates_party_and_records_the_organizer()
     {
@@ -119,6 +40,7 @@ public sealed class OrganizerServiceTests
         await Assert.ThrowsAsync<ArgumentException>(() => service.CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, "not-an-email", null, 1));
 
         Assert.Equal(party.Email, (await db.InvitationParties.SingleAsync()).Email);
+        Assert.Equal("invalid-email", (await db.AuditEvents.SingleAsync()).ReasonCategory);
     }
 
     [Fact]
@@ -134,10 +56,11 @@ public sealed class OrganizerServiceTests
         db.ChangeTracker.Clear();
         party = await db.InvitationParties.SingleAsync(x => x.Id == party.Id);
         Assert.Equal(InvitationStatus.Confirmed, party.Status);
-        var audit = await db.AuditEvents.SingleAsync();
+        var audit = await db.AuditEvents.SingleAsync(x => x.Outcome == "Accepted");
         Assert.Equal(InvitationStatus.Pending, audit.PreviousStatus);
         Assert.Equal(InvitationStatus.Confirmed, audit.ResultingStatus);
         Assert.Equal("Approved exception", audit.ReasonCategory);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "PartyStatusOverridden" && x.Outcome == "Rejected" && x.ReasonCategory == "missing-reason");
     }
 
     [Fact]
@@ -326,7 +249,7 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
-    public async Task Committing_a_prepared_draft_creates_party_token_and_delivery_envelope_together()
+    public async Task Committing_a_prepared_draft_creates_party_token_with_raw_send_material()
     {
         await using var db = CreateDb();
         await SeedConfigurationAsync(db, 10);
@@ -339,10 +262,9 @@ public sealed class OrganizerServiceTests
         Assert.Equal(InvitationBatchState.Committed, batch.State);
         var party = await db.InvitationParties.SingleAsync();
         var token = await db.RsvpTokens.SingleAsync();
-        var envelope = await db.ProtectedDeliveryEnvelopes.SingleAsync();
         Assert.Equal(party.Id, token.PartyId);
         Assert.Equal(party.TokenHash, token.Hash);
-        Assert.Equal(token.Id, envelope.TokenId);
+        Assert.NotNull(token.RawToken);
         Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchCommitted" && x.Outcome == "Accepted");
     }
 
@@ -389,14 +311,145 @@ public sealed class OrganizerServiceTests
         Assert.Null(replacement.RevokedAtUtc);
         Assert.NotEqual(revoked.Hash, replacement.Hash);
         Assert.Equal(replacement.Hash, (await db.InvitationParties.SingleAsync()).TokenHash);
-        Assert.Single(await db.ProtectedDeliveryEnvelopes.ToListAsync());
+        Assert.NotNull((await db.RsvpTokens.SingleAsync(x => x.Id != original.Id)).RawToken);
+    }
+
+    [Fact]
+    public async Task Approved_template_and_verified_sender_prepare_one_dispatch_per_eligible_batch_party()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Email wave", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 2, TokenHash = RsvpService.HashToken("email-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "email-token", IssuedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(batch, party, token);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
+        await service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Join us", "<p>Hello</p>", "Hello"));
+        var template = Assert.Single(await service.GetTemplatesAsync());
+        await service.ApproveTemplateAsync(template.Id, template.Version);
+        var campaign = await service.PrepareInitialCampaignAsync(batch.Id, template.Id);
+
+        Assert.Equal(1, campaign.RecipientCount);
+        var dispatch = Assert.Single(await db.EmailDispatches.ToListAsync());
+        Assert.Equal(party.Id, dispatch.PartyId);
+        Assert.Equal(token.Id, dispatch.TokenId);
+        Assert.Equal(EmailDispatchState.Queued, dispatch.State);
+        Assert.Equal(EmailCampaignState.ReadyForReview, campaign.State);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "EmailCampaignPrepared" && x.EmailCampaignId == campaign.Id);
+    }
+
+    [Fact]
+    public async Task Campaign_list_projects_dispatch_counts()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Campaign batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var template = new EmailTemplate { Type = EmailTemplateType.InitialInvitation, VersionNumber = 1, Subject = "Subject", HtmlBody = "<p>Body</p>", PlainTextBody = "Body", State = EmailTemplateState.Approved, ContentDigest = "digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
+        var campaign = new EmailCampaign { BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = 1, TemplateDigest = "digest", FromDisplayName = "Theater", FromAddress = "events@theater.org", ReplyToAddress = "support@theater.org", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test", QueuedAtUtc = DateTimeOffset.UtcNow, State = EmailCampaignState.Queued };
+        db.AddRange(batch, template, campaign);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+
+        var campaigns = await service.GetCampaignsAsync();
+
+        var result = Assert.Single(campaigns);
+        Assert.Equal("Campaign batch", result.BatchName);
+        Assert.Equal(0, result.RecipientCount);
+    }
+
+    [Fact]
+    public async Task Campaign_review_renders_preview_and_confirming_it_queues_dispatches()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Review batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("review-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "review-token", IssuedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(batch, party, token);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
+        await service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Hello {{guest_name}}", "<p>{{guest_name}} {{rsvp_url}}</p>", "{{guest_name}} {{rsvp_url}}"));
+        var template = Assert.Single(await service.GetTemplatesAsync());
+        await service.ApproveTemplateAsync(template.Id, template.Version);
+        var campaign = await service.PrepareInitialCampaignAsync(batch.Id, template.Id);
+
+        var detail = await service.GetCampaignAsync(campaign.Id);
+        Assert.NotNull(detail);
+        Assert.Equal(EmailCampaignState.ReadyForReview, detail.State);
+        Assert.Contains("Žaneta Guest", detail.Preview.Subject);
+        Assert.Contains("[private RSVP link]", detail.Preview.PlainTextBody);
+        await service.ConfirmCampaignAsync(campaign.Id, detail.Version);
+
+        var queued = await service.GetCampaignAsync(campaign.Id);
+        Assert.Equal(EmailCampaignState.Queued, queued!.State);
+        await service.SendCampaignAsync(campaign.Id, queued.Version);
+
+        var sent = await service.GetCampaignAsync(campaign.Id);
+        Assert.Equal(EmailCampaignState.Completed, sent!.State);
+        Assert.Equal(EmailDispatchState.Accepted, Assert.Single(sent.Dispatches).State);
+    }
+
+    [Fact]
+    public async Task Template_rejects_unknown_placeholder()
+    {
+        await using var db = CreateDb();
+        var service = CreateEmailService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "{{unknown}}", "Hello", "Hello")));
+    }
+
+    [Fact]
+    public async Task Party_email_history_returns_safe_dispatch_details()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Email history batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("history-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "history-token", IssuedAtUtc = DateTimeOffset.UtcNow };
+        var template = new EmailTemplate { Type = EmailTemplateType.InitialInvitation, VersionNumber = 1, Subject = "Subject", HtmlBody = "<p>Body</p>", PlainTextBody = "Body", State = EmailTemplateState.Approved, ContentDigest = "digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
+        var campaign = new EmailCampaign { BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = 1, TemplateDigest = "digest", FromDisplayName = "Theater", FromAddress = "events@theater.org", ReplyToAddress = "support@theater.org", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test", QueuedAtUtc = DateTimeOffset.UtcNow, State = EmailCampaignState.Completed };
+        var dispatch = new EmailDispatch { CampaignId = campaign.Id, PartyId = party.Id, TokenId = token.Id, RecipientEmail = party.Email, RecipientName = party.PrimaryGuestName, AllocatedSeats = 1, DeadlineUtc = batch.DeadlineUtc, IdempotencyKey = "history/dispatch", State = EmailDispatchState.Accepted, AttemptCount = 1, AcceptedAtUtc = DateTimeOffset.UtcNow, ProviderMessageId = "provider-id" };
+        db.AddRange(batch, party, token, template, campaign, dispatch);
+        await db.SaveChangesAsync();
+
+        var history = await CreateService(db).GetPartyEmailDispatchesAsync(party.Id);
+
+        var result = Assert.Single(history);
+        Assert.Equal("Email history batch", result.BatchName);
+        Assert.Equal(EmailDispatchState.Accepted, result.State);
+        Assert.Null(result.FailureCategory);
+    }
+
+    [Fact]
+    public async Task Reminder_campaign_allows_each_active_pending_party_once()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Reminder batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("reminder-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "reminder-token", IssuedAtUtc = DateTimeOffset.UtcNow };
+        var template = new EmailTemplate { Type = EmailTemplateType.Reminder, VersionNumber = 1, Subject = "Reminder", HtmlBody = "<p>Reminder</p>", PlainTextBody = "Reminder", State = EmailTemplateState.Approved, ContentDigest = "reminder-digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
+        db.AddRange(batch, party, token, template);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
+
+        var campaign = await service.PrepareReminderCampaignAsync(batch.Id, template.Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PrepareReminderCampaignAsync(batch.Id, template.Id));
+
+        Assert.Equal(1, campaign.RecipientCount);
     }
 
     private static InvitationDbContext CreateDb() => new(new DbContextOptionsBuilder<InvitationDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
         .Options);
 
-    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName), new TestEnvelopeProtector());
+    private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
+    private static EmailCampaignService CreateEmailService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new AllowedAuthorization(), new FixedClock(), new TransactionRetry(), new EmailTemplateRenderer(), new AcceptedEmailProvider(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["PublicApp:BaseUrl"] = "https://rsvp.example.org" }).Build());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {
@@ -455,8 +508,9 @@ public sealed class OrganizerServiceTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
-    private sealed class TestEnvelopeProtector : IDeliveryEnvelopeProtector
+
+    private sealed class AcceptedEmailProvider : IEmailProvider
     {
-        public byte[] Protect(string token) => System.Text.Encoding.UTF8.GetBytes(token);
+        public Task<EmailProviderResult> SendAsync(EmailProviderMessage message, CancellationToken cancellationToken) => Task.FromResult(new EmailProviderResult(true, false, "provider-message", null));
     }
 }

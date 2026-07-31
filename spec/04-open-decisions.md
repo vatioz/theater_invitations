@@ -17,12 +17,12 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 | OD-09 | What character limit and wording apply to accessibility requests? | Decided | Requestor and theater | Start with 500 characters pending theater feedback. | Phase 2 |
 | OD-10 | Is CSV import strictly all-or-nothing? | Decided | Product owner | Yes; correct invalid rows and preview again. | Phase 3 |
 | OD-11 | How should duplicate emails across batches be handled? | Decided | Requestor | Block by default and require an explicit correction or documented exception. | Phase 3 |
-| OD-12 | Which organizer roles may import, send, override, lock, and export? | Decided | System owner | Separate viewer and operator roles; reserve overrides and lock for elevated operators. | Phase 3 |
+| OD-12 | Which organizer roles may import, send, override, lock, and export? | Decided | System owner | Use `Operator` and `ElevatedOperator`; reserve overrides and lock for elevated operators. | Phase 3 |
 | OD-30 | May persisted draft import data exist before commit? | Decided | Requestor | Persist protected draft rows for review; do not create live parties or reserve capacity until commit. | Batch management |
 | OD-31 | Are batch display names unique? | Decided | Requestor | Require case-insensitive uniqueness among non-deleted batches. | Batch management |
 | OD-32 | Who may administer committed batch deadlines and regenerate RSVP tokens? | Decided | Requestor | Restrict both to `ElevatedOperator`; require reason and confirmation. | Batch management |
 | OD-33 | What happens when a deadline is extended after system expiry? | Decided | Requestor | Reopen only unanswered parties expired by the prior system deadline; organizer-expired parties remain terminal. | Batch management |
-| OD-34 | How are raw RSVP tokens retained for delayed email delivery? | Decided | Requestor | Store only a protected delivery envelope, encrypted with managed key material and accessible to the send worker. | Batch management and Phase 4 |
+| OD-34 | How are raw RSVP tokens retained for email delivery? | Decided | Requestor | Store the raw token with its hash in the restricted token record for manual one-off email rendering. Never expose it in UI, audit, logs, exports, or errors. | Batch management and Phase 4 |
 | OD-35 | What draft-source retention applies? | Decided | Requestor | Retain normalized draft rows and source digest only; do not retain raw CSV. Delete drafts after the approved operational window. | Batch management |
 
 ## Email
@@ -30,11 +30,11 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 | ID | Decision | Status | Owner | Recommended Default | Blocks |
 | --- | --- | --- | --- | --- | --- |
 | OD-13 | Which organization owns the Resend account? | Decided | System owner | Organization-owned account, not a developer's personal account. | Phase 4 |
-| OD-14 | Which sending domain or subdomain, From name, From address, and Reply-To are approved? | Decided | Communications and IT | Use a dedicated verified subdomain and monitored Reply-To. | Phase 4 |
-| OD-15 | Which current Resend plan and provider limits apply during the event window? | Decided | System owner | Verify against expected party count, reminders, tests, and provider documentation. | Phase 4 |
-| OD-16 | Who approves invitation and reminder content? | Decided | Communications | Require versioned approval before each campaign. | Phase 4 |
-| OD-17 | When are reminders sent and how many are allowed per invitation? | Decided | Requestor | One reminder to active pending parties before each deadline. | Phase 4 |
-| OD-18 | How are bounces, complaints, suppressions, corrections, and resend requests handled? | Decided | Communications and organizer | Surface failures, suppress complaints/permanent bounces, and require corrected addresses for resend. | Phase 4 |
+| OD-14 | Which sending domain or subdomain, From name, From address, and Reply-To are approved? | Decided | Communications and IT | Configure approved sender identity in elevated organizer UI; require a verified organization-owned Resend domain and monitored Reply-To. Keep API credentials outside the UI. | Phase 4 |
+| OD-15 | Which current Resend plan and provider limits apply during the event window? | Decided | System owner | Upgrade before launch; keep the daily send ceiling and provider rate limits configurable and verify current Resend documentation before sending. | Phase 4 |
+| OD-16 | Who approves invitation and reminder content? | Decided | Communications | `Operator` and `ElevatedOperator` may create, edit, and approve versioned templates. | Phase 4 |
+| OD-17 | When are reminders sent and how many are allowed per invitation? | Decided | Requestor | All sending is manually triggered. Permit one manually triggered reminder to active pending parties before each deadline. | Phase 4 |
+| OD-18 | How are bounces, complaints, suppressions, corrections, and resend requests handled? | Decided | Communications and organizer | Store normalized dispatch state for each party; surface it in party and campaign UI, suppress complaints/permanent bounces, reuse the active link for normal resends, and require corrected addresses for resend. | Phase 4 |
 
 ## Theater and Handoff
 

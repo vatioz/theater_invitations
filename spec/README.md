@@ -76,6 +76,8 @@ These are implementation directions, not permission to hard-code provider assump
 5. [Implementation gaps](05-implementation-gaps.md)
 6. [Public RSVP experience](06-public-rsvp-experience.md)
 7. [Batch management](07-batch-management.md)
+8. [Email campaigns](08-email-campaigns.md)
+9. [Azure deployment runbook](09-azure-deployment-runbook.md)
 
 ## Guiding Principles
 

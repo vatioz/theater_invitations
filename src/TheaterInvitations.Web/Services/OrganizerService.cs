@@ -10,7 +10,7 @@ using TheaterInvitations.Web.Data;
 
 namespace TheaterInvitations.Web.Services;
 
-public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment, IDeliveryEnvelopeProtector envelopeProtector)
+public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<InvitationDbContext> dbFactory, IClock clock, IOrganizerAuthorization authorization, ITransactionRetry retry, IHostEnvironment environment)
 {
     public async ValueTask<GridItemsProviderResult<OrganizerParty>> GetPartiesAsync(GridItemsProviderRequest<OrganizerParty> request, string? search, InvitationStatus? status, Guid? batchId = null)
     {
@@ -31,6 +31,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
             BatchName = x.batch.Name,
+            LatestEmailState = gridDb.EmailDispatches.Where(dispatch => dispatch.PartyId == x.party.Id).OrderByDescending(dispatch => dispatch.Id).Select(dispatch => (EmailDispatchState?)dispatch.State).FirstOrDefault(),
             Version = x.party.Version
         });
         var totalCount = await projected.CountAsync(request.CancellationToken);
@@ -76,6 +77,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
             BatchName = x.batch.Name,
+            LatestEmailState = db.EmailDispatches.Where(dispatch => dispatch.PartyId == x.party.Id).OrderByDescending(dispatch => dispatch.Id).Select(dispatch => (EmailDispatchState?)dispatch.State).FirstOrDefault(),
             Version = x.party.Version
         }).ToListAsync(cancellationToken);
         var reserved = await ReservedSeatsAsync(now, cancellationToken);
@@ -104,6 +106,15 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         await db.InvitationBatches.AsNoTracking()
             .OrderByDescending(x => x.CreatedAtUtc)
             .Select(x => new OrganizerBatch(x.Id, x.Name, x.DeadlineUtc, x.State, x.Version))
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<OrganizerEmailDispatch>> GetPartyEmailDispatchesAsync(Guid partyId, CancellationToken cancellationToken = default) =>
+        await (from dispatch in db.EmailDispatches.AsNoTracking()
+               join campaign in db.EmailCampaigns.AsNoTracking() on dispatch.CampaignId equals campaign.Id
+               join batch in db.InvitationBatches.AsNoTracking() on campaign.BatchId equals batch.Id
+               where dispatch.PartyId == partyId
+               orderby campaign.CreatedAtUtc descending
+               select new OrganizerEmailDispatch(batch.Name, campaign.Type, campaign.CreatedAtUtc, dispatch.State, dispatch.AttemptCount, dispatch.AcceptedAtUtc, dispatch.FailureCategory))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<OrganizerDraft>> GetDraftsAsync(CancellationToken cancellationToken = default) =>
@@ -194,9 +205,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
                 var hash = RsvpService.HashToken(rawToken);
                 var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.PrimaryGuestName!, Email = row.Email!, Company = row.Company, AllocatedSeats = row.AllocatedSeats!.Value, TokenHash = hash };
                 operationDb.InvitationParties.Add(party);
-                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, RawToken = rawToken, IssuedAtUtc = clock.UtcNow };
                 operationDb.RsvpTokens.Add(rsvpToken);
-                operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = rsvpToken.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
             }
 
             batch.State = InvitationBatchState.Committed; batch.CommittedAtUtc = clock.UtcNow; batch.CommittedBy = actor; batch.ModifiedAtUtc = clock.UtcNow; batch.ModifiedBy = actor;
@@ -253,9 +263,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             var rawToken = CreateRawToken();
             var hash = RsvpService.HashToken(rawToken);
             party.TokenHash = hash;
-            var replacement = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
+            var replacement = new RsvpToken { PartyId = party.Id, Hash = hash, RawToken = rawToken, IssuedAtUtc = clock.UtcNow };
             operationDb.RsvpTokens.Add(replacement);
-            operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = replacement.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
             AddAudit(operationDb, "RsvpTokenRegenerated", "Accepted", null, party.Id, actor, reason);
             await operationDb.SaveChangesAsync(token);
             if (transaction is not null) await transaction.CommitAsync(token);
@@ -349,78 +358,6 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         }
     }
 
-    public async Task<ImportPreview> PreviewImportAsync(string csv, CancellationToken cancellationToken = default)
-    {
-        var parsed = ParseCsv(csv);
-        var rows = parsed.Rows;
-        var errors = parsed.Errors.ToList();
-        var valid = new List<ImportRow>();
-        if (errors.Count > 0) return new ImportPreview(valid, errors);
-        if (rows.Count == 0 || !rows[0].SequenceEqual(new[] { "primary_guest_name", "email", "company", "allocated_seats" }, StringComparer.Ordinal)) return new ImportPreview(valid, new[] { "CSV must use the canonical header row." });
-        var existing = await db.InvitationParties.Select(x => x.Email.ToUpper()).ToListAsync(cancellationToken);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var index = 1; index < rows.Count; index++)
-        {
-            var fields = rows[index];
-            var rowNumber = index + 1;
-            if (fields.Length != 4)
-            {
-                errors.Add($"Row {rowNumber} must contain exactly 4 columns."); continue;
-            }
-            if (string.IsNullOrWhiteSpace(fields[0]))
-            {
-                errors.Add($"Row {rowNumber}: primary_guest_name is required."); continue;
-            }
-            string email;
-            try
-            {
-                email = PartyEmailValidation.Normalize(fields[1]);
-            }
-            catch (ArgumentException)
-            {
-                errors.Add($"Row {rowNumber}: email must be a valid address."); continue;
-            }
-            if (!int.TryParse(fields[3], CultureInfo.InvariantCulture, out var seats) || seats <= 0)
-            {
-                errors.Add($"Row {rowNumber}: allocated_seats must be a positive integer."); continue;
-            }
-            if (!seen.Add(email) || existing.Contains(email.ToUpperInvariant())) { errors.Add($"Row {rowNumber}: email is already invited or duplicated in this upload."); continue; }
-            valid.Add(new ImportRow(fields[0].Trim(), email, string.IsNullOrWhiteSpace(fields[2]) ? null : fields[2].Trim(), seats));
-        }
-        var capacity = (await db.EventConfigurations.SingleAsync(cancellationToken)).Capacity;
-        if (await ReservedSeatsAsync(clock.UtcNow, cancellationToken) + valid.Sum(x => x.AllocatedSeats) > capacity) errors.Add("The import would exceed remaining capacity.");
-        return new ImportPreview(valid, errors);
-    }
-
-    public async Task CommitImportAsync(ImportPreview preview, string batchName, CancellationToken cancellationToken = default)
-    {
-        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
-        if (!preview.IsValid) throw new InvalidOperationException("Only a valid preview may be committed.");
-        await retry.ExecuteAsync(async token =>
-        {
-            await using var operationDb = await dbFactory.CreateDbContextAsync(token);
-            await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
-            var configuration = await operationDb.EventConfigurations.SingleAsync(token);
-            if (await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + preview.TotalSeats > configuration.Capacity) throw new InvalidOperationException("The import would exceed remaining capacity.");
-            var batch = new InvitationBatch { Name = batchName, DeadlineUtc = clock.UtcNow.AddDays(14), State = InvitationBatchState.Committed, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, ModifiedAtUtc = clock.UtcNow, ModifiedBy = actor, CommittedAtUtc = clock.UtcNow, CommittedBy = actor };
-            operationDb.InvitationBatches.Add(batch);
-            foreach (var row in preview.ValidRows)
-            {
-                var rawToken = CreateRawToken();
-                var hash = RsvpService.HashToken(rawToken);
-                var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, TokenHash = hash };
-                operationDb.InvitationParties.Add(party);
-                var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, IssuedAtUtc = clock.UtcNow };
-                operationDb.RsvpTokens.Add(rsvpToken);
-                operationDb.ProtectedDeliveryEnvelopes.Add(new ProtectedDeliveryEnvelope { PartyId = party.Id, TokenId = rsvpToken.Id, ProtectedToken = envelopeProtector.Protect(rawToken), CreatedAtUtc = clock.UtcNow, ProtectionPurpose = DeliveryEnvelopeProtector.Purpose });
-            }
-            AddAudit(operationDb, "BatchImported", "Accepted", batch.Id, null, actor, null);
-            await operationDb.SaveChangesAsync(token);
-            if (transaction is not null) await transaction.CommitAsync(token);
-            return true;
-        }, cancellationToken);
-    }
-
     public async Task SetGlobalLockAsync(bool isLocked, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
@@ -435,15 +372,21 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     public async Task CorrectPartyAsync(Guid partyId, uint expectedVersion, string name, string email, string? company, int seats, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        string normalizedEmail;
+        try { normalizedEmail = PartyEmailValidation.Normalize(email); }
+        catch (ArgumentException)
+        {
+            await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "invalid-email", cancellationToken);
+            throw;
+        }
         await retry.ExecuteAsync(async token =>
         {
             await using var operationDb = await dbFactory.CreateDbContextAsync(token);
             await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
             var party = await operationDb.InvitationParties.SingleAsync(x => x.Id == partyId, token);
-            if (party.Version != expectedVersion) throw new StaleDataException("This party changed after you opened it. The latest values have been loaded.");
-            var normalizedEmail = PartyEmailValidation.Normalize(email);
-            if (await operationDb.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == normalizedEmail.ToUpper(), token)) throw new InvalidOperationException("Email is already invited.");
-            if (seats > party.AllocatedSeats && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) - party.AllocatedSeats + seats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) throw new InvalidOperationException("The correction would exceed remaining capacity.");
+            if (party.Version != expectedVersion) { await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "stale", token); throw new StaleDataException("This party changed after you opened it. The latest values have been loaded."); }
+            if (await operationDb.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == normalizedEmail.ToUpper(), token)) { await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "duplicate-email", token); throw new InvalidOperationException("Email is already invited."); }
+            if (seats > party.AllocatedSeats && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) - party.AllocatedSeats + seats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) { await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "capacity-exceeded", token); throw new InvalidOperationException("The correction would exceed remaining capacity."); }
             party.CorrectDetails(name, normalizedEmail, company, seats);
             AddAudit(operationDb, "PartyCorrected", "Accepted", null, partyId, actor, null);
             await operationDb.SaveChangesAsync(token);
@@ -455,15 +398,19 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     public async Task OverrideStatusAsync(Guid partyId, uint expectedVersion, InvitationStatus status, string reason, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
-        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            await RecordOrganizerRejectionAsync("PartyStatusOverridden", actor, partyId, "missing-reason", cancellationToken);
+            throw new ArgumentException("A reason is required.", nameof(reason));
+        }
         await retry.ExecuteAsync(async token =>
         {
             await using var operationDb = await dbFactory.CreateDbContextAsync(token);
             await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(IsolationLevel.Serializable, token) : null;
             var party = await operationDb.InvitationParties.SingleAsync(x => x.Id == partyId, token);
-            if (party.Version != expectedVersion) throw new StaleDataException("This party changed after you opened it. The latest values have been loaded.");
+            if (party.Version != expectedVersion) { await RecordOrganizerRejectionAsync("PartyStatusOverridden", actor, partyId, "stale", token); throw new StaleDataException("This party changed after you opened it. The latest values have been loaded."); }
             var becomingReserved = (status is InvitationStatus.Pending or InvitationStatus.Confirmed) && (party.Status is InvitationStatus.Declined or InvitationStatus.Expired);
-            if (becomingReserved && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + party.AllocatedSeats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) throw new InvalidOperationException("The override would exceed remaining capacity.");
+            if (becomingReserved && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) + party.AllocatedSeats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) { await RecordOrganizerRejectionAsync("PartyStatusOverridden", actor, partyId, "capacity-exceeded", token); throw new InvalidOperationException("The override would exceed remaining capacity."); }
             var previous = party.Status;
             party.OverrideStatus(status, clock.UtcNow);
             AddAudit(operationDb, "PartyStatusOverridden", "Accepted", null, partyId, actor, reason, previous, status, party.Status);
@@ -479,6 +426,12 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     {
         await using var auditDb = await dbFactory.CreateDbContextAsync(cancellationToken);
         AddAudit(auditDb, "SupportEmailChanged", outcome, null, null, actor, reason);
+        await auditDb.SaveChangesAsync(cancellationToken);
+    }
+    private async Task RecordOrganizerRejectionAsync(string eventType, string actor, Guid partyId, string reason, CancellationToken cancellationToken)
+    {
+        await using var auditDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        AddAudit(auditDb, eventType, "Rejected", null, partyId, actor, reason);
         await auditDb.SaveChangesAsync(cancellationToken);
     }
     private void AddAudit(InvitationDbContext operationDb, string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) => operationDb.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting });
@@ -566,9 +519,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     private static string CreateRawToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
-public sealed record ImportRow(string Name, string Email, string? Company, int AllocatedSeats);
-public sealed record ImportPreview(IReadOnlyList<ImportRow> ValidRows, IReadOnlyList<string> Errors) { public int TotalSeats => ValidRows.Sum(x => x.AllocatedSeats); public bool IsValid => Errors.Count == 0; }
 public sealed record OrganizerBatch(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version);
+public sealed record OrganizerEmailDispatch(string BatchName, EmailCampaignType CampaignType, DateTimeOffset CampaignCreatedAtUtc, EmailDispatchState State, int AttemptCount, DateTimeOffset? AcceptedAtUtc, string? FailureCategory);
 internal sealed record CsvParseResult(IReadOnlyList<string[]> Rows, IReadOnlyList<string> Errors);
 internal sealed record DraftRowInput(int SourceRowNumber, string? Name, string? Email, string? Company, int? AllocatedSeats, string? Issue);
 internal sealed record DraftParseResult(IReadOnlyList<DraftRowInput> Rows, string? DocumentIssue) { public bool IsPrepared => DocumentIssue is null && Rows.Count > 0 && Rows.All(x => x.Issue is null); }
@@ -582,6 +534,7 @@ public sealed class OrganizerParty
     public int AllocatedSeats { get; init; }
     public InvitationStatus Status { get; init; }
     public string BatchName { get; init; } = string.Empty;
+    public EmailDispatchState? LatestEmailState { get; init; }
     public uint Version { get; init; }
 }
 public sealed class OrganizerAudit

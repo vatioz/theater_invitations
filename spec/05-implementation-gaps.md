@@ -25,7 +25,7 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
-| A1 | Production organizer authentication | High before deployment | Open | Replace Development cookie personas with Azure App Service claims/group mapping to `Viewer`, `Operator`, and `ElevatedOperator`. ASP.NET Core Identity remains a future option. |
+| A1 | Production organizer authentication | High before deployment | Open | Replace Development cookie personas with Azure App Service claims/group mapping to `Operator` and `ElevatedOperator`. ASP.NET Core Identity remains a future option. |
 
 ## Public RSVP Experience
 
@@ -64,7 +64,7 @@ Treat batch management as a separate follow-up phase.
 | B1 | Organizer-supplied batch name and deadline | High | In Progress | Draft metadata and configured-zone deadline input are implemented; detailed behavior is in [07-batch-management.md](07-batch-management.md). |
 | B2 | Persisted draft-batch workflow | Medium | In Progress | Persisted draft rows, review, and transactional commit are implemented; retention cleanup remains operational work. |
 | B3 | Deadline administration with capacity rechecks | High if multiple batches or extensions are used | In Progress | Transactional deadline changes and system-expiration reopening are implemented; browser and concurrency coverage remains to be expanded. |
-| B4 | RSVP token lifecycle for sending invitations | High before Phase 4 | In Progress | Active token records, protected delivery envelopes, and regeneration are implemented; Phase 4 campaign dispatch remains pending. |
+| B4 | RSVP token lifecycle for sending invitations | High before Phase 4 | In Progress | Active token records retain raw tokens only for restricted manual email rendering; hash lookup and regeneration are implemented. |
 
 ## Suggested One-Off Minimum
 

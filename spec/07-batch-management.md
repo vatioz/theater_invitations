@@ -15,7 +15,7 @@ This scope does not send email. B4 establishes the token lifecycle and persisten
 - Use the canonical reservation formula: confirmed seats plus pending seats whose batch deadline is strictly later than the authoritative current time.
 - Drafts do not reserve capacity. Capacity shown during draft review is an estimate; batch commit and deadline extension must recalculate capacity transactionally.
 - Use PostgreSQL serializable transactions and bounded retry for batch commit, deadline extension, and any other operation that can increase reservation.
-- Require server-side authorization. `Viewer` is read-only. `Operator` may create and edit drafts. Recommended default: only `ElevatedOperator` may change a committed batch deadline because this can change guest eligibility and capacity.
+- Require server-side authorization. `Operator` may create and edit drafts. Only `ElevatedOperator` may change a committed batch deadline because this can change guest eligibility and capacity.
 - Require an expected batch version for consequential mutations. A stale request must be rejected and show current data.
 - Audit accepted and rejected batch mutations with actor, batch reference, timestamp, outcome, reason category, and correlation ID. Never record raw CSV content, raw RSVP tokens, token hashes, full RSVP URLs, or accessibility text in audit metadata.
 
@@ -191,7 +191,7 @@ Before real delivery, identify parties created with unrecoverable random `TokenH
 2. Require case-insensitive batch display-name uniqueness among non-deleted batches.
 3. Allow Operators to create and edit drafts. Require `ElevatedOperator`, reason, and confirmation for committed deadline changes and token regeneration.
 4. Reopen only unanswered parties expired by the prior system deadline. Organizer-expired parties remain terminal.
-5. Store raw RSVP tokens only in protected delivery envelopes encrypted with managed key material for the future send worker.
+5. Store raw RSVP tokens with their hashes in restricted token records for manual email rendering; exclude them from UI, audit, logs, exports, and errors.
 
 ## Recommended Implementation Order
 

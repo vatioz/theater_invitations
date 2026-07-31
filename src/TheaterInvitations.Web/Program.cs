@@ -18,7 +18,7 @@ if (builder.Environment.IsDevelopment())
 }
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("OrganizerViewer", policy => policy.RequireRole("Viewer", "Operator", "ElevatedOperator"));
+    options.AddPolicy("OrganizerViewer", policy => policy.RequireRole("Operator", "ElevatedOperator"));
     options.AddPolicy("OrganizerOperator", policy => policy.RequireRole("Operator", "ElevatedOperator"));
     options.AddPolicy("ElevatedOperator", policy => policy.RequireRole("ElevatedOperator"));
 });
@@ -30,10 +30,11 @@ builder.Services.AddSingleton<IClock, TheaterInvitations.Web.Services.SystemCloc
 builder.Services.AddScoped<RsvpService>();
 builder.Services.AddScoped<RsvpInvitationService>();
 builder.Services.AddScoped<OrganizerService>();
+builder.Services.AddScoped<EmailCampaignService>();
+builder.Services.AddSingleton<EmailTemplateRenderer>();
 builder.Services.AddScoped<IOrganizerAuthorization, OrganizerAuthorization>();
 builder.Services.AddSingleton<ITransactionRetry, TransactionRetry>();
-builder.Services.AddDataProtection();
-builder.Services.AddSingleton<IDeliveryEnvelopeProtector, DeliveryEnvelopeProtector>();
+builder.Services.AddHttpClient<IEmailProvider, ResendEmailProvider>();
 
 var app = builder.Build();
 
@@ -70,7 +71,7 @@ if (app.Environment.IsDevelopment())
 {
     app.MapGet("/dev/login/{role}", async (string role, HttpContext context) =>
     {
-        var allowedRoles = new[] { "Viewer", "Operator", "ElevatedOperator" };
+        var allowedRoles = new[] { "Operator", "ElevatedOperator" };
         if (!allowedRoles.Contains(role, StringComparer.Ordinal))
         {
             return Results.NotFound();
