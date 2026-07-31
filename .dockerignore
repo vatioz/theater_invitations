@@ -1,0 +1,10 @@
+.git
+.github
+.vs
+**/bin
+**/obj
+.env
+.env.*
+manual-test-*.csv
+README.md
+spec
