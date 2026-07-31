@@ -26,8 +26,8 @@ public sealed class ResendEmailProvider(HttpClient client, IConfiguration config
     {
         var options = configuration.GetSection("Resend").Get<ResendOptions>() ?? new ResendOptions();
         if (string.IsNullOrWhiteSpace(options.ApiKey)) return new EmailProviderResult(false, false, null, "provider-not-configured");
-        client.BaseAddress = new Uri(options.ApiBaseUrl);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/emails");
+        var endpoint = new Uri(new Uri(options.ApiBaseUrl.TrimEnd('/') + "/"), "emails");
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
         request.Headers.TryAddWithoutValidation("Idempotency-Key", message.IdempotencyKey);
         request.Content = JsonContent.Create(new { from = message.From, to = new[] { message.To }, reply_to = message.ReplyTo, subject = message.Subject, html = message.Html, text = message.Text });
@@ -39,7 +39,8 @@ public sealed class ResendEmailProvider(HttpClient client, IConfiguration config
                 var result = await response.Content.ReadFromJsonAsync<ResendResponse>(cancellationToken: cancellationToken);
                 return new EmailProviderResult(true, false, result?.Id, null);
             }
-            return new EmailProviderResult(false, response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500, null, response.StatusCode == HttpStatusCode.TooManyRequests ? "provider-rate-limited" : "provider-rejected");
+            var statusCode = (int)response.StatusCode;
+            return new EmailProviderResult(false, response.StatusCode == HttpStatusCode.TooManyRequests || statusCode >= 500, null, response.StatusCode == HttpStatusCode.TooManyRequests ? "provider-rate-limited" : $"provider-rejected-{statusCode}");
         }
         catch (HttpRequestException) { return new EmailProviderResult(false, true, null, "provider-network-error"); }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return new EmailProviderResult(false, true, null, "provider-timeout"); }
