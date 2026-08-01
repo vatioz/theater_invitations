@@ -1,0 +1,14 @@
+@page "/account/login"
+@attribute [AllowAnonymous]
+@using Microsoft.AspNetCore.Identity
+@using TheaterInvitations.Web.Data
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager Navigation
+
+<PageTitle>Organizer sign in</PageTitle>
+<main class="rsvp-page"><section class="rsvp-card login-card"><p class="eyebrow">Organizer</p><h1>Sign in</h1><EditForm Model="model" OnValidSubmit="LoginAsync" FormName="login"><DataAnnotationsValidator /><ValidationSummary /><label>Email <InputText @bind-Value="model.Email" /></label><label>Password <InputText type="password" @bind-Value="model.Password" /></label><button type="submit">Sign in</button>@if (failed) { <p class="validation-message" role="alert">Sign-in failed. Check your credentials or account status.</p> }</EditForm></section></main>
+@code {
+    private readonly LoginModel model = new(); private bool failed;
+    private async Task LoginAsync() { failed = false; var result = await SignInManager.PasswordSignInAsync(model.Email, model.Password, false, true); if (result.Succeeded) Navigation.NavigateTo("/organizer", true); else failed = true; }
+    private sealed class LoginModel { public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
+}

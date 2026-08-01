@@ -129,9 +129,4 @@ Pushes to `main` also publish `latest`. Use the semantic version tag when config
 
 ## Development Organizer Access
 
-Development provides local-only cookie login personas. Open one of these URLs, then go to `/organizer`:
-
-- `https://localhost:7238/dev/login/Operator` for CSV preview and import.
-- `https://localhost:7238/dev/login/ElevatedOperator` for global RSVP lock changes.
-
-These endpoints do not exist outside Development. Production authentication will be supplied by the host and must emit the same organizer role claims.
+Organizer authentication uses the application login at `/account/login` in every environment. The first production elevated account is created from the temporary `BootstrapAdmin__Email` and `BootstrapAdmin__Password` settings. Remove those settings after the first successful account creation.

@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using TheaterInvitations.Domain;
 
 namespace TheaterInvitations.Web.Data;
 
-public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> options) : DbContext(options)
+public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
     public DbSet<EventConfiguration> EventConfigurations => Set<EventConfiguration>();
     public DbSet<InvitationBatch> InvitationBatches => Set<InvitationBatch>();
@@ -18,6 +19,7 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        base.OnModelCreating(modelBuilder);
         modelBuilder.Entity<EventConfiguration>(entity =>
         {
             entity.Property(x => x.Capacity).IsRequired();

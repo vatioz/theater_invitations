@@ -67,6 +67,7 @@
                     else { <p>Sender: @emailSettings.FromDisplayName &lt;@emailSettings.FromAddress&gt;, Reply-To: @emailSettings.ReplyToAddress, daily ceiling: @emailSettings.DailySendCeiling.</p> }
                 </NotAuthorized>
             </AuthorizeView>
+            <AuthorizeView Roles="ElevatedOperator" Context="usersLinkAuth"><Authorized><p><a href="/organizer/users">Manage organizer accounts</a></p></Authorized></AuthorizeView>
         </section>
     }
 </main>
