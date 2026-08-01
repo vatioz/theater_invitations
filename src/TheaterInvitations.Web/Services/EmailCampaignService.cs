@@ -189,7 +189,12 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         var dispatches = await db.EmailDispatches.AsNoTracking().Where(x => x.CampaignId == campaignId).OrderBy(x => x.RecipientName)
             .Select(x => new EmailDispatchSummary(x.Id, x.RecipientName, x.RecipientEmail, x.AllocatedSeats, x.State, x.AttemptCount, x.FailureCategory, x.ProviderMessageId)).ToListAsync(cancellationToken);
         var zone = TimeZoneInfo.FindSystemTimeZoneById(campaign.eventConfiguration.TimeZoneId);
-        var sample = renderer.Render(campaign.template.Subject, campaign.template.HtmlBody, campaign.template.PlainTextBody, new EmailRenderData("Žaneta Guest", "2 seats for you and your guest", campaign.eventConfiguration.EventName, TimeZoneInfo.ConvertTime(campaign.eventConfiguration.StartsAtUtc, zone).ToString("D"), TimeZoneInfo.ConvertTime(campaign.eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(campaign.eventConfiguration.StartsAtUtc, zone).ToString("t"), campaign.eventConfiguration.VenueName, campaign.eventConfiguration.VenueAddress, TimeZoneInfo.ConvertTime(campaign.batch.DeadlineUtc, zone).ToString("f") + $" ({campaign.eventConfiguration.TimeZoneId})", "[private RSVP link]", campaign.eventConfiguration.SupportEmail));
+        var previewRecipient = dispatches.FirstOrDefault();
+        var previewGuestName = previewRecipient?.RecipientName ?? "Guest";
+        var previewAllocation = previewRecipient is null
+            ? "2 seats for you and your guest"
+            : previewRecipient.AllocatedSeats == 1 ? "1 seat" : $"{previewRecipient.AllocatedSeats} seats for you and your guest";
+        var sample = renderer.Render(campaign.template.Subject, campaign.template.HtmlBody, campaign.template.PlainTextBody, new EmailRenderData(previewGuestName, previewAllocation, campaign.eventConfiguration.EventName, TimeZoneInfo.ConvertTime(campaign.eventConfiguration.StartsAtUtc, zone).ToString("D"), TimeZoneInfo.ConvertTime(campaign.eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(campaign.eventConfiguration.StartsAtUtc, zone).ToString("t"), campaign.eventConfiguration.VenueName, campaign.eventConfiguration.VenueAddress, TimeZoneInfo.ConvertTime(campaign.batch.DeadlineUtc, zone).ToString("f") + $" ({campaign.eventConfiguration.TimeZoneId})", "[private RSVP link]", campaign.eventConfiguration.SupportEmail));
         return new EmailCampaignDetail(campaign.item.Id, campaign.item.Type, campaign.item.State, campaign.item.Version, campaign.batch.Name, campaign.template.VersionNumber, campaign.item.FromDisplayName, campaign.item.FromAddress, campaign.item.ReplyToAddress, dispatches, sample);
     }
 

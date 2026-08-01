@@ -380,7 +380,7 @@ public sealed class OrganizerServiceTests
         var detail = await service.GetCampaignAsync(campaign.Id);
         Assert.NotNull(detail);
         Assert.Equal(EmailCampaignState.ReadyForReview, detail.State);
-        Assert.Contains("Žaneta Guest", detail.Preview.Subject);
+        Assert.Contains("Alex Guest", detail.Preview.Subject);
         Assert.Contains("[private RSVP link]", detail.Preview.PlainTextBody);
         await service.ConfirmCampaignAsync(campaign.Id, detail.Version);
 
