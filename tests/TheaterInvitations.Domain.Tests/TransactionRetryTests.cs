@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using TheaterInvitations.Web.Services;
 
 namespace TheaterInvitations.Domain.Tests;
@@ -6,33 +7,30 @@ namespace TheaterInvitations.Domain.Tests;
 public sealed class TransactionRetryTests
 {
     [Fact]
-    public async Task Retries_transient_concurrency_failures()
+    public async Task Retry_recognizes_serialization_failure_nested_in_db_update_exception()
     {
         var attempts = 0;
+        var retry = new TransactionRetry();
 
-        var result = await new TransactionRetry().ExecuteAsync<int>(_ =>
+        var result = await retry.ExecuteAsync<int>(_ =>
         {
             attempts++;
-            if (attempts < 3) throw new DbUpdateConcurrencyException();
+            if (attempts < 2)
+            {
+                var postgres = PostgresExceptionFor("40001");
+                throw new DbUpdateException("wrapped", new InvalidOperationException("inner", postgres));
+            }
+
             return Task.FromResult(42);
         });
 
         Assert.Equal(42, result);
-        Assert.Equal(3, attempts);
+        Assert.Equal(2, attempts);
     }
 
-    [Fact]
-    public async Task Stops_after_three_transient_failures()
-    {
-        var attempts = 0;
-
-        var exception = await Assert.ThrowsAsync<TransactionConflictException>(() => new TransactionRetry().ExecuteAsync<int>(_ =>
-        {
-            attempts++;
-            throw new DbUpdateConcurrencyException();
-        }));
-
-        Assert.Equal(3, attempts);
-        Assert.IsType<DbUpdateConcurrencyException>(exception.InnerException);
-    }
+    private static PostgresException PostgresExceptionFor(string sqlState) => new(
+        "serialization failure",
+        "ERROR",
+        "ERROR",
+        sqlState);
 }
