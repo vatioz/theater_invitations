@@ -22,8 +22,8 @@ Store these values as event configuration rather than page constants:
 | --- | --- | --- |
 | Event name | Yes | Public event title. |
 | Event date | Yes | Displayed in the configured event time zone. |
-| Doors time | Yes | Local event time with a visible time-zone label. |
-| Start time | Yes | Local event time with a visible time-zone label. |
+| Doors time | Yes | Local event time shown with Czech locale and a 24-hour clock. |
+| Start time | Yes | Local event time shown with Czech locale and a 24-hour clock. |
 | Venue name | Yes | Public venue name. |
 | Venue address | Yes | Human-readable postal address. |
 | Dress code | No | Omit the section when empty. |
@@ -35,7 +35,7 @@ The current deployment default is `Europe/Prague`, but it remains configuration.
 
 - Show event name, date, doors time, start time, venue, and address on active and current-response pages.
 - Show dress code only when configured.
-- Display a clear time-zone label beside local times and the RSVP deadline.
+- Convert public event times and the RSVP deadline through the configured event time zone, but omit the public time-zone label.
 - Keep the RSVP decision and party allocation visually more prominent than secondary event details.
 - Show the recorded party allocation on both success and current-response pages.
 - Do not expose event configuration on invalid-token pages if doing so could help distinguish valid event links from unrelated requests. A generic application identity is acceptable.
@@ -50,7 +50,7 @@ The current deployment default is `Europe/Prague`, but it remains configuration.
 ### Acceptance Criteria
 
 1. An active one-seat and two-seat invitation display all configured event details and correct party wording.
-2. Event and deadline times display in the configured event time zone with a visible label.
+2. Event and deadline times display in the configured event time zone using Czech locale and a 24-hour clock, without a public zone label.
 3. Empty dress code does not render an empty heading or placeholder.
 4. Mobile layout presents details without horizontal scrolling.
 5. Current-response pages retain event details and allocation context.

@@ -4,7 +4,7 @@
 
 This application collects whole-party RSVP decisions for a theater event, manages invitation capacity across multiple batches, and exports the final confirmed manifest to the theater.
 
-The application is intentionally limited to invitation and response management. The theater remains responsible for ticket creation, seat assignment, check-in, and front-of-house operations.
+The application manages invitation responses and an isolated organizer-only seating plan. The theater remains responsible for ticket creation, communicating official seat assignments, check-in, and front-of-house operations.
 
 ## Status Labels
 
@@ -32,13 +32,13 @@ The application is intentionally limited to invitation and response management. 
 - Multiple invitation batches governed by available capacity.
 - Invitation and reminder email delivery.
 - Organizer statistics, guest administration, overrides, and audit history.
+- Isolated planning and adjustment of physical seats for confirmed parties.
 - Exporting a confirmed manifest using a theater-compatible mapping.
 
 ### Out of Scope
 
 - Naming or separately managing a party's `+1`.
 - Partial acceptance of a party's allocated seats.
-- Assigning sections, rows, or seats.
 - Producing or distributing tickets unless later added by an approved change.
 - Guest check-in, arrival tracking, fuzzy search, or tablet kiosk workflows.
 - Arrival emails or event-day seat reminders.
@@ -66,6 +66,7 @@ These are implementation directions, not permission to hard-code provider assump
 - **Expired**: The unanswered invitation passed its deadline and no longer reserves capacity.
 - **Global lock**: Organizer-controlled state that rejects RSVP changes across all invitations.
 - **Manifest**: Export of confirmed parties for handoff to the theater.
+- **Seating plan**: An organizer-only assignment of confirmed parties to configured physical seats. It is non-authoritative for RSVP and capacity operations.
 
 ## Specification Set
 
@@ -78,6 +79,7 @@ These are implementation directions, not permission to hard-code provider assump
 7. [Batch management](07-batch-management.md)
 8. [Email campaigns](08-email-campaigns.md)
 9. [Azure deployment runbook](09-azure-deployment-runbook.md)
+10. [Product changes: RSVP, workflows, Czech UI, seating, import, and export](10-product-workflow-and-seating-changes.md)
 
 ## Guiding Principles
 
@@ -87,3 +89,4 @@ These are implementation directions, not permission to hard-code provider assump
 4. Administrative exceptions must be explicit and audited.
 5. Provider and theater contracts must remain replaceable at system boundaries.
 6. Accessibility information must be collected and exposed only as necessary.
+7. Seating must remain isolated: seating configuration or failure must never block RSVP, import, campaign, capacity, deadline, or lock operations.

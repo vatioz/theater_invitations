@@ -94,6 +94,8 @@ UI-only validation is insufficient.
 | `email` | Yes | One recipient address per party. |
 | `company` | No | Preserved as provided after trimming. |
 | `allocated_seats` | Yes | Positive integer, normally 1 or 2. |
+| `priority` | No | Integer 1, 2, or 3 used by seating; defaults to 3. |
+| `phone` | No | Restricted future-purpose contact data; trimmed and preserved without guessed normalization. |
 
 Batch and deadline are supplied by the import workflow, not repeated in every row unless a later contract explicitly requires it.
 
@@ -108,6 +110,7 @@ Batch and deadline are supplied by the import workflow, not repeated in every ro
 - Treat duplicate handling as an organizer decision, never silently merge rows.
 - Calculate total allocated seats and resulting remaining capacity before commit.
 - Keep preview data temporary and discard it according to the approved retention policy.
+- Match recognized columns by name independent of order. Prominently warn about and ignore unknown columns; never silently accept a missing required header.
 
 ## Canonical Manifest and Theater Export
 
@@ -118,6 +121,9 @@ Internally, the confirmed manifest has stable semantic fields:
 - Email.
 - Allocated seats.
 - Accessibility requirements.
+- Phone when present.
+- Current physical-seat labels when assigned.
+- Priority only if required by the approved theater mapping.
 - Internal party reference, included only if approved for reconciliation.
 
 A versioned export mapping converts this model to the theater's required headers, column order, encoding, delimiter, and party representation. The adapter may duplicate or transform rows only if the theater contract demands it; such transformation must not alter the application's atomic party model.
