@@ -10,7 +10,7 @@ public interface ITransactionRetry
 
 public sealed class TransactionRetry : ITransactionRetry
 {
-    private const int MaxAttempts = 3;
+    private const int MaxAttempts = 5;
 
     public async Task<T> ExecuteAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken = default)
     {
@@ -33,8 +33,13 @@ public sealed class TransactionRetry : ITransactionRetry
 
     private static bool IsTransientConflict(Exception exception)
     {
-        var postgresException = exception as PostgresException ?? exception.InnerException as PostgresException;
-        return exception is DbUpdateConcurrencyException || postgresException?.SqlState is PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.DeadlockDetected;
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbUpdateConcurrencyException) return true;
+            if (current is PostgresException postgresException && postgresException.SqlState is PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.DeadlockDetected) return true;
+        }
+
+        return false;
     }
 }
 
