@@ -20,7 +20,17 @@ public static class IdentitySeeder
         if (await users.FindByEmailAsync(email) is not null) return;
         var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true };
         var result = await users.CreateAsync(user, password);
-        if (!result.Succeeded) throw new InvalidOperationException("Bootstrap organizer account could not be created.");
-        await users.AddToRoleAsync(user, "ElevatedOperator");
+        if (!result.Succeeded)
+        {
+            var errors = string.Join(" ", result.Errors.Select(error => error.Description));
+            throw new InvalidOperationException($"Bootstrap organizer account could not be created: {errors}");
+        }
+
+        var roleResult = await users.AddToRoleAsync(user, "ElevatedOperator");
+        if (!roleResult.Succeeded)
+        {
+            var errors = string.Join(" ", roleResult.Errors.Select(error => error.Description));
+            throw new InvalidOperationException($"Bootstrap organizer role could not be assigned: {errors}");
+        }
     }
 }

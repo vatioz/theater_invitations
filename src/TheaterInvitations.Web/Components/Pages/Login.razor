@@ -6,9 +6,18 @@
 @inject NavigationManager Navigation
 
 <PageTitle>Organizer sign in</PageTitle>
-<main class="rsvp-page"><section class="rsvp-card login-card"><p class="eyebrow">Organizer</p><h1>Sign in</h1><EditForm Model="model" OnValidSubmit="LoginAsync" FormName="login"><DataAnnotationsValidator /><ValidationSummary /><label>Email <InputText @bind-Value="model.Email" /></label><label>Password <InputText type="password" @bind-Value="model.Password" /></label><button type="submit">Sign in</button>@if (failed) { <p class="validation-message" role="alert">Sign-in failed. Check your credentials or account status.</p> }</EditForm></section></main>
+<main class="rsvp-page"><section class="rsvp-card login-card"><p class="eyebrow">Organizer</p><h1>Sign in</h1><EditForm Model="Model" OnValidSubmit="LoginAsync" FormName="login"><DataAnnotationsValidator /><ValidationSummary /><label>Email <InputText @bind-Value="Model.Email" /></label><label>Password <InputText type="password" @bind-Value="Model.Password" /></label><button type="submit">Sign in</button>@if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }</EditForm></section></main>
 @code {
-    private readonly LoginModel model = new(); private bool failed;
-    private async Task LoginAsync() { failed = false; var result = await SignInManager.PasswordSignInAsync(model.Email, model.Password, false, true); if (result.Succeeded) Navigation.NavigateTo("/organizer", true); else failed = true; }
+    [SupplyParameterFromForm] private LoginModel Model { get; set; } = new();
+    private string? error;
+    private async Task LoginAsync()
+    {
+        error = null;
+        var result = await SignInManager.PasswordSignInAsync(Model.Email.Trim(), Model.Password, false, true);
+        if (result.Succeeded) Navigation.NavigateTo("/organizer", true);
+        else if (result.IsLockedOut) error = "This account is temporarily locked after repeated failed sign-in attempts.";
+        else if (result.IsNotAllowed) error = "This organizer account is not allowed to sign in.";
+        else error = "Sign-in failed. Check the email and password.";
+    }
     private sealed class LoginModel { public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
 }
