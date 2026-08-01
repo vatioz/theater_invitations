@@ -1,6 +1,6 @@
 # Azure Deployment Runbook
 
-This runbook describes a pragmatic production deployment for the one-off theater RSVP event. It uses one Linux custom container on an existing Azure App Service plan, Azure Database for PostgreSQL Flexible Server, Microsoft Entra App Service Authentication for organizers, and Resend for manually triggered email campaigns.
+This runbook describes a pragmatic production deployment for the one-off theater RSVP event. It uses one Linux custom container on an existing Azure App Service plan, Azure Database for PostgreSQL Flexible Server, application-managed Identity authentication for organizers, and Resend for manually triggered email campaigns.
 
 The functional requirements in [02-functional-requirements.md](02-functional-requirements.md) remain normative. This document is an operational deployment artifact, not an infrastructure-as-code specification.
 
@@ -13,7 +13,7 @@ Guests
   -> Azure Database for PostgreSQL Flexible Server
 
 Organizers
-  -> Microsoft Entra / App Service Authentication
+  -> Application Identity login
   -> Azure App Service custom container
 
 Manual email campaigns
@@ -40,7 +40,7 @@ Do not send real invitations until these gaps are resolved and rehearsed:
 | Image registry | Azure Container Registry, pulled through App Service managed identity. |
 | Database | Azure Database for PostgreSQL Flexible Server. |
 | Database networking | Public endpoint plus firewall allowlist for fastest one-off setup, unless organizational policy requires private networking. |
-| Organizer identity | Microsoft Entra through App Service Authentication. |
+| Organizer identity | Application-managed ASP.NET Core Identity. |
 | Organizer roles | `Operator` and `ElevatedOperator`. |
 | Public RSVP access | Anonymous bearer-token route only. |
 | Email | Resend API with manually triggered sequential campaigns. |
@@ -200,14 +200,21 @@ The public app hostname and the verified Resend sender domain do not need to be 
 
 ## Step 7: Configure Organizer Authentication
 
-In the App Service Authentication blade:
+Application-managed ASP.NET Core Identity is used; App Service Authentication is not required for organizer access.
 
-1. Add Microsoft Entra as the identity provider.
-2. Use the workforce tenant that owns organizer identities.
-3. Create or select an app registration.
-4. Require authentication for organizer access.
-5. Ensure anonymous requests remain possible for `/rsvp/*`.
-6. Configure claims or application roles that the application maps to:
+1. Set temporary App Service settings:
+
+```text
+BootstrapAdmin__Email=your-admin@example.com
+BootstrapAdmin__Password=<generated-strong-password>
+```
+
+2. Deploy and open `/account/login`.
+3. Sign in once to create the `ElevatedOperator` account.
+4. Remove both bootstrap settings and restart the app.
+5. Use the elevated user-management page to create additional operators.
+6. Ensure anonymous requests remain possible for `/rsvp/*`.
+7. Configure application roles:
 
 ```text
 Operator
@@ -216,7 +223,7 @@ ElevatedOperator
 
 7. Test that both roles reach organizer routes and that only `ElevatedOperator` can perform elevated actions.
 
-App Service authentication identifies users; the application still performs role authorization in its service layer. Do not rely only on hidden UI controls.
+The application performs role authorization in both route policies and service methods. Do not rely only on hidden UI controls.
 
 ## Step 8: Configure Resend
 
@@ -284,7 +291,7 @@ Verify all of the following:
 - [ ] Production migrations applied explicitly.
 - [ ] `ConnectionStrings__Postgres`, `PublicApp__BaseUrl`, `Resend__ApiKey`, and `WEBSITES_PORT` configured.
 - [ ] Public HTTPS RSVP domain tested from outside the deployment machine.
-- [ ] App Service Authentication tested with `Operator` and `ElevatedOperator` claims.
+- [ ] Application login tested with `Operator` and `ElevatedOperator` accounts.
 - [ ] Resend domain verified and test campaign accepted.
 - [ ] One-recipient production rehearsal completed.
 - [ ] Log/audit token-leak review completed.

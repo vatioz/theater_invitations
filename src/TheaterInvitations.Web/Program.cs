@@ -2,20 +2,28 @@ using TheaterInvitations.Web.Components;
 using Microsoft.EntityFrameworkCore;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Authentication;
-using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
-if (builder.Environment.IsDevelopment())
+builder.Services.AddIdentityCore<ApplicationUser>(options =>
 {
-    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-        .AddCookie(options => options.LoginPath = "/dev/login");
-}
+    options.User.RequireUniqueEmail = true;
+    options.Password.RequiredLength = 12;
+    options.Password.RequireNonAlphanumeric = true;
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+})
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<InvitationDbContext>()
+    .AddSignInManager();
+builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme)
+    .AddIdentityCookies();
+builder.Services.Configure<CookieAuthenticationOptions>(IdentityConstants.ApplicationScheme, options => options.LoginPath = "/account/login");
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("OrganizerViewer", policy => policy.RequireRole("Operator", "ElevatedOperator"));
@@ -31,6 +39,7 @@ builder.Services.AddScoped<RsvpService>();
 builder.Services.AddScoped<RsvpInvitationService>();
 builder.Services.AddScoped<OrganizerService>();
 builder.Services.AddScoped<EmailCampaignService>();
+builder.Services.AddScoped<OrganizerUserService>();
 builder.Services.AddSingleton<EmailTemplateRenderer>();
 builder.Services.AddScoped<IOrganizerAuthorization, OrganizerAuthorization>();
 builder.Services.AddSingleton<ITransactionRetry, TransactionRetry>();
@@ -45,6 +54,8 @@ if (DevelopmentSeedGuard.ShouldSeed(app.Environment))
     await db.Database.MigrateAsync();
     await DevelopmentDataSeeder.SeedAsync(db);
 }
+
+await IdentitySeeder.SeedAsync(app.Services, app.Environment, app.Configuration);
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
@@ -67,30 +78,6 @@ app.UseAuthorization();
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
-if (app.Environment.IsDevelopment())
-{
-    app.MapGet("/dev/login/{role}", async (string role, HttpContext context) =>
-    {
-        var allowedRoles = new[] { "Operator", "ElevatedOperator" };
-        if (!allowedRoles.Contains(role, StringComparer.Ordinal))
-        {
-            return Results.NotFound();
-        }
-
-        var identity = new ClaimsIdentity(new[]
-        {
-            new Claim(ClaimTypes.NameIdentifier, $"development-{role.ToLowerInvariant()}"),
-            new Claim(ClaimTypes.Name, $"Development {role}"),
-            new Claim(ClaimTypes.Role, role)
-        }, CookieAuthenticationDefaults.AuthenticationScheme);
-        await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
-        return Results.Redirect("/organizer");
-    });
-    app.MapGet("/dev/logout", async (HttpContext context) =>
-    {
-        await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return Results.Redirect("/");
-    });
-}
+app.MapGet("/account/logout", async (SignInManager<ApplicationUser> signInManager) => { await signInManager.SignOutAsync(); return Results.Redirect("/account/login"); });
 
 app.Run();
