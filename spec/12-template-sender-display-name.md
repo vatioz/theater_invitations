@@ -1,6 +1,6 @@
 # Template-Specific Sender Display Name
 
-This document defines the implementation change that moves the email `From` display name from application-wide sender settings to each immutable email-template version. The functional requirements in [02-functional-requirements.md](02-functional-requirements.md) remain normative.
+This document defines the implementation change that moves the email `From` display name from application-wide sender settings to each immutable named email template. The functional requirements in [02-functional-requirements.md](02-functional-requirements.md) remain normative.
 
 ## Goal
 
@@ -12,21 +12,21 @@ Company segmentation itself remains an organizer workflow: organizers use separa
 
 | Concern | Owner | Behavior |
 | --- | --- | --- |
-| From display name | Immutable email-template version | Required literal display text selected with the template. |
+| From display name | Immutable named email template | Required literal display text selected with the template. |
 | From address | Application-wide sender configuration | Required verified Resend-bound address used by every live and test send. |
 | Reply-To address | Application-wide sender configuration | Required monitored organizer mailbox used by every live and test send. |
 | Daily send ceiling | Application-wide sender configuration | Unchanged. |
 | Domain verification marker | Application-wide sender configuration | Unchanged and continues to guard campaign preparation and test sends. |
 | Campaign sender identity | Immutable campaign snapshot | Copies the template display name plus the application-wide From and Reply-To addresses at preparation time. |
 
-`EmailCampaign.FromDisplayName`, `EmailCampaign.FromAddress`, and `EmailCampaign.ReplyToAddress` remain historical snapshots. Existing campaign history must not be rewritten when a template version or application-wide setting changes.
+`EmailCampaign.FromDisplayName`, `EmailCampaign.FromAddress`, and `EmailCampaign.ReplyToAddress` remain historical snapshots. Existing campaign history must not be rewritten when a template or application-wide setting changes.
 
 ## Invariants
 
 1. Every live campaign provider message uses the sender identity snapshotted from `template.FromDisplayName <settings.FromAddress>` and `settings.ReplyToAddress` when the campaign was prepared. Test sends resolve the same combination directly from the selected template and current settings.
 2. A template cannot override the sender email address or Reply-To address.
 3. A display name is literal template metadata. It does not support placeholders or per-recipient rendering.
-4. Changing a display name requires creating a new immutable template version; it must not mutate a template version referenced by campaign history.
+4. Changing a display name requires creating a new immutable named template; it must not mutate a template referenced by campaign history.
 5. Test send and live campaign preparation resolve sender identity by the same rules.
 6. Campaign review shows the exact display name, From address, and Reply-To address that will be sent.
 7. Material sender changes after campaign preparation invalidate the review under the existing review-freshness rules.
@@ -43,7 +43,7 @@ Add:
 
 Include `FromDisplayName` in the template content digest. The digest must continue to cover the template type, subject, HTML body, and plain-text body. Template name remains organizer metadata rather than message content.
 
-Template summaries and template input DTOs must expose `FromDisplayName` so list, selection, preview, test-send, and campaign-preparation UI can display it.
+Template summaries and template input DTOs must expose `FromDisplayName` so list, selection, preview, test-send, and campaign-preparation UI can display it. Templates are identified by their stable ID and organizer-provided name; there is no ordinal template version number.
 
 ### `EmailSenderConfiguration`
 
@@ -87,9 +87,9 @@ Add a required Czech-labeled sender-display-name input to template creation. Exp
 
 - The value is the name recipients see as the sender.
 - The sender address and Reply-To are controlled centrally.
-- A separate template version should be created for each company-facing identity.
+- A separate named template should be created for each company-facing identity.
 
-Template list rows and selection options should show the display name sufficiently clearly to prevent choosing the wrong company identity. The existing template type, name, version, state, and subject remain visible.
+Template list rows and selection options should show the display name sufficiently clearly to prevent choosing the wrong company identity. The existing template type, name, state, and subject remain visible.
 
 `Operator` and `ElevatedOperator` already have template authority; therefore both roles may choose the template-specific display name. Only `ElevatedOperator` may change the application-wide From address, Reply-To, daily ceiling, or verification marker.
 
@@ -118,12 +118,12 @@ Campaign detail continues to show the immutable campaign sender snapshot. Histor
 
 The review fingerprint or equivalent authoritative version set must bind:
 
-- Template ID, version, state, content digest, and `FromDisplayName`.
+- Template ID, name, state, content digest, and `FromDisplayName`.
 - Campaign sender snapshot.
 - Current application-wide From address, Reply-To address, and verification state.
 - All previously required event, batch, recipient, token, suppression, deadline, and eligibility material.
 
-The removed application-wide display-name field must no longer participate in new fingerprints. A change to the application-wide From address, Reply-To address, or verification state invalidates unsent and paused campaigns. A new template version with a different display name does not alter an already prepared campaign, but organizers must prepare a new campaign to use it.
+The removed application-wide display-name field must no longer participate in new fingerprints. A change to the application-wide From address, Reply-To address, or verification state invalidates unsent and paused campaigns. A new named template with a different display name does not alter an already prepared campaign, but organizers must prepare a new campaign to use it.
 
 ## Migration And Rollout
 
@@ -138,7 +138,7 @@ Use an expand/contract migration so schema deployment does not reinterpret histo
 5. Keep `EmailSenderConfigurations.FromDisplayName` only as legacy migration data; new runtime paths ignore it.
 6. Do not modify any `EmailCampaign` sender snapshot or its stored template digest.
 
-If no valid legacy display name exists, do not invent one. Retire or make the affected template unavailable for new preparation until an organizer creates a replacement template version with an explicit display name. Report the affected template count during migration/release verification.
+If no valid legacy display name exists, do not invent one. Retire or make the affected template unavailable for new preparation until an organizer creates a replacement named template with an explicit display name. Report the affected template count during migration/release verification.
 
 ### Contract
 
@@ -188,7 +188,7 @@ Keep sender resolution in one service-level path where practical so test and cam
 - Campaign preparation snapshots all three resolved values.
 - Provider execution uses the campaign snapshot and does not reread current values for an accepted campaign.
 - Changing global From address, Reply-To, or verification invalidates review.
-- Creating a later template version does not mutate a prepared or historical campaign.
+- Creating a later named template does not mutate a prepared or historical campaign.
 
 ### Migration Tests
 

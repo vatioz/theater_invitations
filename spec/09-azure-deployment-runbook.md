@@ -242,7 +242,7 @@ I have verified this sender domain in Resend: checked
 
 The checkbox is an organizer operational attestation. It does not perform DNS verification; Resend is the source of truth for verified-domain status.
 
-6. Create or verify each active email-template version with its intended From display name. Templates for different company-facing campaigns may use different display names, but they all use the application-wide From and Reply-To addresses above.
+6. Create or verify each active named email template with its intended From display name. Templates for different company-facing campaigns may use different display names, but they all use the application-wide From and Reply-To addresses above.
 
 ## Step 9: Staging Rehearsal
 

@@ -49,12 +49,11 @@
         </section>
         <section class="rsvp-card settings-card">
             <h2>Nastavení odesílatele e-mailů</h2>
-            <p>Nastavte identitu odesílatele pro budoucí kampaně. Klíč Resend API zůstává chráněným tajemstvím nasazení a zde se nezobrazuje.</p>
+            <p>Nastavte společnou adresu odesílatele a adresu pro odpovědi. Zobrazované jméno se nastavuje u každé šablony. Klíč Resend API zůstává chráněným tajemstvím nasazení a zde se nezobrazuje.</p>
             <AuthorizeView Roles="ElevatedOperator" Context="emailSettingsAuth">
                 <Authorized>
                     <EditForm Model="emailModel" OnValidSubmit="SaveEmailSettingsAsync" FormName="email-sender-settings" class="manage-form settings-form">
                         <DataAnnotationsValidator /><ValidationSummary />
-                        <label>Zobrazované jméno odesílatele <InputText @bind-Value="emailModel.FromDisplayName" /></label>
                         <label>Adresa odesílatele <InputText @bind-Value="emailModel.FromAddress" /></label>
                         <label>Adresa pro odpovědi <InputText @bind-Value="emailModel.ReplyToAddress" /></label>
                         <label>Denní limit odesílání <InputNumber @bind-Value="emailModel.DailySendCeiling" /></label>
@@ -64,7 +63,7 @@
                 </Authorized>
                 <NotAuthorized>
                     @if (emailSettings is null) { <p>Nastavení odesílatele není vytvořeno.</p> }
-                    else { <p>Odesílatel: @emailSettings.FromDisplayName &lt;@emailSettings.FromAddress&gt;, odpovědi: @emailSettings.ReplyToAddress, denní limit: @emailSettings.DailySendCeiling.</p> }
+                    else { <p>Adresa odesílatele: @emailSettings.FromAddress, odpovědi: @emailSettings.ReplyToAddress, denní limit: @emailSettings.DailySendCeiling.</p> }
                 </NotAuthorized>
             </AuthorizeView>
             <AuthorizeView Roles="ElevatedOperator" Context="usersLinkAuth"><Authorized><p><a href="/organizer/users">Spravovat účty pořadatelů</a></p></Authorized></AuthorizeView>
@@ -86,7 +85,7 @@
     }
     private async Task SaveEmailSettingsAsync()
     {
-        try { await EmailCampaignService.SaveSenderSettingsAsync(new EmailSenderSettingsInput(emailModel.FromDisplayName, emailModel.FromAddress, emailModel.ReplyToAddress, emailModel.DailySendCeiling, emailModel.IsDomainVerified), emailSettings?.Version); error = null; await RefreshAsync(); }
+        try { await EmailCampaignService.SaveSenderSettingsAsync(new EmailSenderSettingsInput(emailModel.FromAddress, emailModel.ReplyToAddress, emailModel.DailySendCeiling, emailModel.IsDomainVerified), emailSettings?.Version); error = null; await RefreshAsync(); }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException) { error = exception.Message; }
     }
     private async Task RefreshAsync() { dashboard = await OrganizerService.GetDashboardAsync(); model.Load(dashboard.Configuration); emailSettings = await EmailCampaignService.GetSenderSettingsAsync(); emailModel.Load(emailSettings); }
@@ -101,11 +100,10 @@
     }
     private sealed class EmailSenderSettingsModel
     {
-        [Required] public string FromDisplayName { get; set; } = string.Empty;
         [Required, EmailAddress] public string FromAddress { get; set; } = string.Empty;
         [Required, EmailAddress] public string ReplyToAddress { get; set; } = string.Empty;
         [Range(1, int.MaxValue)] public int DailySendCeiling { get; set; } = 100;
         public bool IsDomainVerified { get; set; }
-        public void Load(EmailSenderSettings? settings) { if (settings is null) return; FromDisplayName = settings.FromDisplayName; FromAddress = settings.FromAddress; ReplyToAddress = settings.ReplyToAddress; DailySendCeiling = settings.DailySendCeiling; IsDomainVerified = settings.IsDomainVerified; }
+        public void Load(EmailSenderSettings? settings) { if (settings is null) return; FromAddress = settings.FromAddress; ReplyToAddress = settings.ReplyToAddress; DailySendCeiling = settings.DailySendCeiling; IsDomainVerified = settings.IsDomainVerified; }
     }
 }

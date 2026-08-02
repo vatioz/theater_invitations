@@ -147,6 +147,9 @@ th { color: #58656a; font-size: .75rem; letter-spacing: .05em; text-transform: u
 .saved-draft-list > div { display: flex; align-items: center; gap: .75rem; padding: .75rem; border: 1px solid #d8d1c4; background: #faf7f0; }
 .saved-draft-list button { flex: 0 0 auto; }
 .saved-draft-list small { color: #58656a; font-family: Arial, sans-serif; }
+.campaign-pagination { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; color: #58656a; font: .8rem Arial, sans-serif; }
+.campaign-pagination > div { display: flex; align-items: center; gap: .75rem; }
+.campaign-pagination button:disabled { cursor: not-allowed; opacity: .45; }
 .deadline-change-form { margin-top: 1rem; max-width: 42rem; }
 .deadline-current { padding: .75rem; background: #edf2ee; color: #35434a !important; }
 
@@ -200,6 +203,8 @@ th { color: #58656a; font-size: .75rem; letter-spacing: .05em; text-transform: u
     .campaign-preview-grid { grid-template-columns: 1fr; }
     .campaign-confirm { justify-content: start; }
     .campaign-confirm p { text-align: left; }
+    .campaign-pagination { align-items: stretch; flex-direction: column; }
+    .campaign-pagination > div { justify-content: space-between; }
 }
 
 @media (max-width: 760px) {

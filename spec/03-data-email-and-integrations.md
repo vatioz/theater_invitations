@@ -48,7 +48,7 @@ Audit history should be stored as rows rather than a growing JSON array on the p
 
 ### EmailCampaign and EmailDispatch
 
-- Campaign type, template version, audience criteria or snapshot, and creator.
+- Campaign type, selected template identity and content digest, audience criteria or snapshot, and creator.
 - One dispatch per campaign-recipient pair.
 - Provider message identifier and normalized delivery state.
 - Attempt count, timestamps, and sanitized failure category.
@@ -136,7 +136,7 @@ A versioned export mapping converts this model to the theater's required headers
 - Send from a verified organization-owned domain or subdomain.
 - Configure the DNS records currently required by Resend, including DKIM and SPF-related records as applicable.
 - Define and publish a DMARC policy appropriate to the organization's broader mail posture.
-- Configure one approved application-wide `From` address and organizer `Reply-To`; configure the visible From display name on each immutable template version.
+- Configure one approved application-wide `From` address and organizer `Reply-To`; configure the visible From display name on each immutable template.
 - Store API credentials in protected application configuration or a managed secret store.
 
 No provider can guarantee inbox placement. Authentication, reputation, relevant content, clean lists, low complaint rates, and gradual testing improve deliverability.

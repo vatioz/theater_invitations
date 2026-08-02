@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TheaterInvitations.Web.Data;
@@ -11,9 +12,11 @@ using TheaterInvitations.Web.Data;
 namespace TheaterInvitations.Web.Migrations
 {
     [DbContext(typeof(InvitationDbContext))]
-    partial class InvitationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260802193238_TemplateSenderDisplayName")]
+    partial class TemplateSenderDisplayName
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -425,6 +428,9 @@ namespace TheaterInvitations.Web.Migrations
                     b.Property<Guid>("TemplateId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("TemplateVersionNumber")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Type")
                         .HasColumnType("integer");
 
@@ -709,7 +715,13 @@ namespace TheaterInvitations.Web.Migrations
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
 
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("Type", "VersionNumber")
+                        .IsUnique();
 
                     b.ToTable("EmailTemplates");
                 });

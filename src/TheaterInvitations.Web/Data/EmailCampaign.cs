@@ -8,7 +8,6 @@ public sealed class EmailCampaign
     public Guid BatchId { get; init; }
     public Guid? SourceCampaignId { get; init; }
     public Guid TemplateId { get; init; }
-    public int TemplateVersionNumber { get; init; }
     public string TemplateDigest { get; init; } = string.Empty;
     public string FromDisplayName { get; init; } = string.Empty;
     public string FromAddress { get; init; } = string.Empty;
