@@ -14,7 +14,7 @@
     {
         <section class="rsvp-card">
             <h2>Vytvořit návrh dávky</h2>
-            <p>Nahrajte sloupce CSV: <code>primary_guest_name,email,company,allocated_seats</code>.</p>
+            <p>Nahrajte sloupce CSV v libovolném pořadí: <code>primary_guest_name,email,allocated_seats,company,priority,phone</code>.</p>
             <AuthorizeView Roles="Operator,ElevatedOperator" Context="draftAuth"><Authorized>
                 @if (dashboard.Configuration is null) { <p class="validation-message">Před vytvořením návrhu dávky nastavte akci.</p> }
                 else

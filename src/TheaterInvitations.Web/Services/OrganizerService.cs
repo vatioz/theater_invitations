@@ -28,6 +28,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             Name = x.party.PrimaryGuestName,
             Email = x.party.Email,
             Company = x.party.Company,
+            Priority = x.party.Priority,
+            Phone = x.party.Phone,
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
             BatchName = x.batch.Name,
@@ -74,6 +76,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             Name = x.party.PrimaryGuestName,
             Email = x.party.Email,
             Company = x.party.Company,
+            Priority = x.party.Priority,
+            Phone = x.party.Phone,
             AllocatedSeats = x.party.AllocatedSeats,
             Status = x.party.Status,
             BatchName = x.batch.Name,
@@ -130,7 +134,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         if (batch is null || batch.State == InvitationBatchState.Committed) return null;
         var rows = await db.InvitationDraftRows.AsNoTracking().Where(x => x.BatchId == batchId)
             .OrderBy(x => x.SourceRowNumber)
-            .Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.PrimaryGuestName, x.Email, x.Company, x.AllocatedSeats, x.ValidationIssue))
+            .Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.PrimaryGuestName, x.Email, x.Company, x.Priority, x.Phone, x.AllocatedSeats, x.ValidationIssue))
             .ToListAsync(cancellationToken);
         return new OrganizerDraftDetail(batch.Id, batch.Name, batch.DeadlineUtc, batch.State, batch.Version, batch.ValidationIssue, rows);
     }
@@ -162,10 +166,10 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             batch.Name = normalizedName; batch.DeadlineUtc = deadlineUtc; batch.State = parsed.IsPrepared ? InvitationBatchState.Prepared : InvitationBatchState.Draft; batch.ModifiedAtUtc = now; batch.ModifiedBy = actor; batch.SourceDigest = HashContent(csv); batch.ValidationIssue = parsed.DocumentIssue;
         }
 
-        foreach (var row in parsed.Rows) operationDb.InvitationDraftRows.Add(new InvitationDraftRow { BatchId = batch.Id, SourceRowNumber = row.SourceRowNumber, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, AllocatedSeats = row.AllocatedSeats, ValidationIssue = row.Issue });
+        foreach (var row in parsed.Rows) operationDb.InvitationDraftRows.Add(new InvitationDraftRow { BatchId = batch.Id, SourceRowNumber = row.SourceRowNumber, PrimaryGuestName = row.Name, Email = row.Email, Company = row.Company, Priority = row.Priority, Phone = row.Phone, AllocatedSeats = row.AllocatedSeats, ValidationIssue = row.Issue });
         AddAudit(operationDb, "BatchDraftSaved", "Accepted", batch.Id, null, actor, null);
         await operationDb.SaveChangesAsync(cancellationToken);
-        return new OrganizerDraftDetail(batch.Id, batch.Name, batch.DeadlineUtc, batch.State, batch.Version, batch.ValidationIssue, parsed.Rows.Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.Name, x.Email, x.Company, x.AllocatedSeats, x.Issue)).ToList());
+        return new OrganizerDraftDetail(batch.Id, batch.Name, batch.DeadlineUtc, batch.State, batch.Version, batch.ValidationIssue, parsed.Rows.Select(x => new OrganizerDraftRow(x.SourceRowNumber, x.Name, x.Email, x.Company, x.Priority, x.Phone, x.AllocatedSeats, x.Issue)).ToList());
     }
 
     public async Task DeleteDraftAsync(Guid batchId, uint expectedVersion, CancellationToken cancellationToken = default)
@@ -203,7 +207,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             {
                 var rawToken = CreateRawToken();
                 var hash = RsvpService.HashToken(rawToken);
-                var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.PrimaryGuestName!, Email = row.Email!, Company = row.Company, AllocatedSeats = row.AllocatedSeats!.Value, TokenHash = hash };
+                var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = row.PrimaryGuestName!, Email = row.Email!, Company = row.Company, Priority = row.Priority ?? 3, Phone = row.Phone, AllocatedSeats = row.AllocatedSeats!.Value, TokenHash = hash };
                 operationDb.InvitationParties.Add(party);
                 var rsvpToken = new RsvpToken { PartyId = party.Id, Hash = hash, RawToken = rawToken, IssuedAtUtc = clock.UtcNow };
                 operationDb.RsvpTokens.Add(rsvpToken);
@@ -369,7 +373,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         await operationDb.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task CorrectPartyAsync(Guid partyId, uint expectedVersion, string name, string email, string? company, int seats, CancellationToken cancellationToken = default)
+    public async Task CorrectPartyAsync(Guid partyId, uint expectedVersion, string name, string email, string? company, int priority, string? phone, int seats, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         string normalizedEmail;
@@ -387,13 +391,16 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
             if (party.Version != expectedVersion) { await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "stale", token); throw new StaleDataException("This party changed after you opened it. The latest values have been loaded."); }
             if (await operationDb.InvitationParties.AnyAsync(x => x.Id != partyId && x.Email.ToUpper() == normalizedEmail.ToUpper(), token)) { await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "duplicate-email", token); throw new InvalidOperationException("Email is already invited."); }
             if (seats > party.AllocatedSeats && await ReservedSeatsAsync(operationDb, clock.UtcNow, token) - party.AllocatedSeats + seats > (await operationDb.EventConfigurations.SingleAsync(token)).Capacity) { await RecordOrganizerRejectionAsync("PartyCorrected", actor, partyId, "capacity-exceeded", token); throw new InvalidOperationException("The correction would exceed remaining capacity."); }
-            party.CorrectDetails(name, normalizedEmail, company, seats);
+            party.CorrectDetails(PartyDataValidation.NormalizeName(name), normalizedEmail, PartyDataValidation.NormalizeCompany(company), PartyDataValidation.NormalizePriority(priority.ToString(CultureInfo.InvariantCulture)), PartyDataValidation.NormalizePhone(phone), seats);
             AddAudit(operationDb, "PartyCorrected", "Accepted", null, partyId, actor, null);
             await operationDb.SaveChangesAsync(token);
             if (transaction is not null) await transaction.CommitAsync(token);
             return true;
         }, cancellationToken);
     }
+
+    public Task CorrectPartyAsync(Guid partyId, uint expectedVersion, string name, string email, string? company, int seats, CancellationToken cancellationToken = default) =>
+        CorrectPartyAsync(partyId, expectedVersion, name, email, company, 3, null, seats, cancellationToken);
 
     public async Task OverrideStatusAsync(Guid partyId, uint expectedVersion, InvitationStatus status, string reason, CancellationToken cancellationToken = default)
     {
@@ -436,75 +443,16 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     }
     private void AddAudit(InvitationDbContext operationDb, string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) => operationDb.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting });
 
-    private static CsvParseResult ParseCsv(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return new CsvParseResult(Array.Empty<string[]>(), Array.Empty<string>());
-        try
-        {
-            if (new UTF8Encoding(false, true).GetByteCount(text) > 1_000_000)
-            {
-                return new CsvParseResult(Array.Empty<string[]>(), new[] { "CSV must be 1 MB or smaller." });
-            }
-        }
-        catch (EncoderFallbackException)
-        {
-            return new CsvParseResult(Array.Empty<string[]>(), new[] { "CSV must be valid UTF-8 text." });
-        }
-
-        var rows = new List<string[]>();
-        try
-        {
-            using var parser = new TextFieldParser(new StringReader(text.TrimStart('\uFEFF')))
-            {
-                TextFieldType = FieldType.Delimited,
-                HasFieldsEnclosedInQuotes = true,
-                TrimWhiteSpace = false
-            };
-            parser.SetDelimiters(",");
-            while (!parser.EndOfData)
-            {
-                rows.Add(parser.ReadFields() ?? Array.Empty<string>());
-            }
-        }
-        catch (MalformedLineException exception)
-        {
-            return new CsvParseResult(Array.Empty<string[]>(), new[] { $"Malformed CSV near line {exception.LineNumber}. Check quoted fields and delimiters." });
-        }
-
-        return new CsvParseResult(rows, Array.Empty<string>());
-    }
-
     private async Task<DraftParseResult> BuildDraftRowsAsync(string csv, CancellationToken cancellationToken)
     {
-        var parsed = ParseCsv(csv);
-        if (parsed.Errors.Count > 0) return new DraftParseResult(Array.Empty<DraftRowInput>(), parsed.Errors.Single());
-        if (parsed.Rows.Count == 0 || !parsed.Rows[0].SequenceEqual(new[] { "primary_guest_name", "email", "company", "allocated_seats" }, StringComparer.Ordinal)) return new DraftParseResult(Array.Empty<DraftRowInput>(), "CSV must use the canonical header row.");
+        await using var input = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+        var parsed = new CsvImportParser().Parse(input);
+        var documentFindings = parsed.DocumentFindings.ToList();
+        if (parsed.IgnoredHeaders.Count > 0) documentFindings.Add($"Ignorované sloupce: {string.Join(", ", parsed.IgnoredHeaders)}.");
+        var documentIssue = documentFindings.Count == 0 ? null : string.Join(" ", documentFindings);
         var existing = await db.InvitationParties.Select(x => x.Email.ToUpper()).ToListAsync(cancellationToken);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var rows = new List<DraftRowInput>();
-        for (var index = 1; index < parsed.Rows.Count; index++)
-        {
-            var fields = parsed.Rows[index];
-            string? issue = null;
-            string? name = null;
-            string? email = null;
-            string? company = null;
-            int? seats = null;
-            if (fields.Length != 4) issue = "Row must contain exactly 4 columns.";
-            else
-            {
-                name = string.IsNullOrWhiteSpace(fields[0]) ? null : fields[0].Trim();
-                if (name is null) issue = "primary_guest_name is required.";
-                try { email = PartyEmailValidation.Normalize(fields[1]); }
-                catch (ArgumentException) { issue ??= "email must be a valid address."; }
-                company = string.IsNullOrWhiteSpace(fields[2]) ? null : fields[2].Trim();
-                if (!int.TryParse(fields[3], CultureInfo.InvariantCulture, out var parsedSeats) || parsedSeats <= 0) issue ??= "allocated_seats must be a positive integer.";
-                else seats = parsedSeats;
-                if (email is not null && (!seen.Add(email) || existing.Contains(email.ToUpperInvariant()))) issue ??= "email is already invited or duplicated in this upload.";
-            }
-            rows.Add(new DraftRowInput(index + 1, name, email, company, seats, issue));
-        }
-        return new DraftParseResult(rows, null);
+        var rows = parsed.Rows.Select(row => new DraftRowInput(row.SourceRowNumber, row.Name, row.Email, row.Company, row.Priority, row.Phone, row.AllocatedSeats, row.Email is not null && existing.Contains(row.Email.ToUpperInvariant()) ? "E-mail je již pozván." : row.ValidationIssue)).ToList();
+        return new DraftParseResult(rows, documentIssue, parsed.IgnoredHeaders);
     }
 
     private static void ValidateBatchInput(BatchDraftInput input, EventConfiguration configuration, DateTimeOffset nowUtc)
@@ -521,9 +469,8 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
 
 public sealed record OrganizerBatch(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version);
 public sealed record OrganizerEmailDispatch(string BatchName, EmailCampaignType CampaignType, DateTimeOffset CampaignCreatedAtUtc, EmailDispatchState State, int AttemptCount, DateTimeOffset? AcceptedAtUtc, string? FailureCategory);
-internal sealed record CsvParseResult(IReadOnlyList<string[]> Rows, IReadOnlyList<string> Errors);
-internal sealed record DraftRowInput(int SourceRowNumber, string? Name, string? Email, string? Company, int? AllocatedSeats, string? Issue);
-internal sealed record DraftParseResult(IReadOnlyList<DraftRowInput> Rows, string? DocumentIssue) { public bool IsPrepared => DocumentIssue is null && Rows.Count > 0 && Rows.All(x => x.Issue is null); }
+internal sealed record DraftRowInput(int SourceRowNumber, string? Name, string? Email, string? Company, int Priority, string? Phone, int? AllocatedSeats, string? Issue);
+internal sealed record DraftParseResult(IReadOnlyList<DraftRowInput> Rows, string? DocumentIssue, IReadOnlyList<string> IgnoredHeaders) { public bool IsPrepared => DocumentIssue is null && Rows.Count > 0 && Rows.All(x => x.Issue is null); }
 public sealed record PartyQuery(string? Search = null, InvitationStatus? Status = null, Guid? BatchId = null, int Page = 1, int PageSize = 25);
 public sealed class OrganizerParty
 {
@@ -531,6 +478,8 @@ public sealed class OrganizerParty
     public string Name { get; init; } = string.Empty;
     public string Email { get; init; } = string.Empty;
     public string? Company { get; init; }
+    public int Priority { get; init; }
+    public string? Phone { get; init; }
     public int AllocatedSeats { get; init; }
     public InvitationStatus Status { get; init; }
     public string BatchName { get; init; } = string.Empty;
@@ -548,5 +497,5 @@ public sealed record OrganizerDashboard(bool IsRsvpLocked, int ConfirmedSeats, i
 public sealed record EventConfigurationInput(int Capacity, string EventName, DateTime DoorsLocal, DateTime StartsLocal, string VenueName, string VenueAddress, string? DressCode, string TimeZoneId, string? SupportEmail, int AccessibilityTextLimit);
 public sealed record BatchDraftInput(string Name, DateTime DeadlineLocal);
 public sealed record OrganizerDraft(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version, string? ValidationIssue);
-public sealed record OrganizerDraftRow(int SourceRowNumber, string? Name, string? Email, string? Company, int? AllocatedSeats, string? ValidationIssue);
+public sealed record OrganizerDraftRow(int SourceRowNumber, string? Name, string? Email, string? Company, int? Priority, string? Phone, int? AllocatedSeats, string? ValidationIssue);
 public sealed record OrganizerDraftDetail(Guid Id, string Name, DateTimeOffset DeadlineUtc, InvitationBatchState State, uint Version, string? ValidationIssue, IReadOnlyList<OrganizerDraftRow> Rows);
