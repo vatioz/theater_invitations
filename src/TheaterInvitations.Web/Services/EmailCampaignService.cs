@@ -55,15 +55,23 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<EmailCampaignSummary>> GetCampaignsAsync(CancellationToken cancellationToken = default) =>
-         await (from campaign in db.EmailCampaigns.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc)
-                join batch in db.InvitationBatches.AsNoTracking() on campaign.BatchId equals batch.Id
-                join template in db.EmailTemplates.AsNoTracking() on campaign.TemplateId equals template.Id
-                 select new EmailCampaignSummary(campaign.Id, campaign.Type, campaign.State, batch.Name, template.Name, campaign.CreatedAtUtc,
-                   db.EmailDispatches.Count(x => x.CampaignId == campaign.Id),
-                   db.EmailDispatches.Count(x => x.CampaignId == campaign.Id && x.State == EmailDispatchState.Accepted),
-                   db.EmailDispatches.Count(x => x.CampaignId == campaign.Id && x.State == EmailDispatchState.Failed), campaign.Version))
+    public async Task<EmailCampaignPage> GetCampaignsAsync(int pageIndex = 0, int pageSize = 10, CancellationToken cancellationToken = default)
+    {
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        pageIndex = Math.Max(0, pageIndex);
+        var totalCount = await db.EmailCampaigns.CountAsync(cancellationToken);
+        var campaigns = await (from campaign in db.EmailCampaigns.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
+                               join batch in db.InvitationBatches.AsNoTracking() on campaign.BatchId equals batch.Id
+                               join template in db.EmailTemplates.AsNoTracking() on campaign.TemplateId equals template.Id
+                               select new EmailCampaignSummary(campaign.Id, campaign.Type, campaign.State, batch.Name, template.Name, campaign.CreatedAtUtc,
+                                  db.EmailDispatches.Count(x => x.CampaignId == campaign.Id),
+                                  db.EmailDispatches.Count(x => x.CampaignId == campaign.Id && x.State == EmailDispatchState.Accepted),
+                                  db.EmailDispatches.Count(x => x.CampaignId == campaign.Id && x.State == EmailDispatchState.Failed), campaign.Version))
+            .Skip(pageIndex * pageSize)
+            .Take(pageSize)
             .ToListAsync(cancellationToken);
+        return new EmailCampaignPage(campaigns, totalCount, pageIndex, pageSize);
+    }
 
     public async Task<EmailCampaignSummary> PrepareInitialCampaignAsync(Guid batchId, Guid templateId, CancellationToken cancellationToken = default)
     {
@@ -569,6 +577,12 @@ public sealed record EmailSenderSettings(string FromAddress, string ReplyToAddre
 public sealed record EmailSenderSettingsInput(string FromAddress, string ReplyToAddress, int DailySendCeiling, bool IsDomainVerified);
 public sealed record EmailTemplateInput(EmailTemplateType Type, string Name, string FromDisplayName, string Subject, string HtmlBody, string PlainTextBody);
 public sealed record EmailTemplateSummary(Guid Id, EmailTemplateType Type, string Name, string? FromDisplayName, string Subject, EmailTemplateState State, uint Version);
+public sealed record EmailCampaignPage(IReadOnlyList<EmailCampaignSummary> Campaigns, int TotalCount, int PageIndex, int PageSize)
+{
+    public int PageCount => Math.Max(1, (int)Math.Ceiling(TotalCount / (double)PageSize));
+    public bool HasPreviousPage => PageIndex > 0;
+    public bool HasNextPage => PageIndex + 1 < PageCount;
+}
 public sealed record EmailCampaignSummary(Guid Id, EmailCampaignType Type, EmailCampaignState State, string BatchName, string TemplateName, DateTimeOffset CreatedAtUtc, int RecipientCount, int AcceptedCount, int FailedCount, uint Version);
 public sealed record EmailDispatchSummary(Guid Id, string RecipientName, string RecipientEmail, int AllocatedSeats, EmailDispatchState State, int AttemptCount, string? FailureCategory, string? ProviderMessageId);
 public sealed record EmailCampaignSkipSummary(Guid? PartyId, string ReasonCategory);

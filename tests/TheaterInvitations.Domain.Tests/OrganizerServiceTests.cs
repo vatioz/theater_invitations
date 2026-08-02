@@ -419,9 +419,12 @@ public sealed class OrganizerServiceTests
 
         var campaigns = await service.GetCampaignsAsync();
 
-        var result = Assert.Single(campaigns);
+        var result = Assert.Single(campaigns.Campaigns);
         Assert.Equal("Campaign batch", result.BatchName);
         Assert.Equal(0, result.RecipientCount);
+        Assert.Equal(1, campaigns.TotalCount);
+        Assert.False(campaigns.HasPreviousPage);
+        Assert.False(campaigns.HasNextPage);
     }
 
     [Fact]
