@@ -6,12 +6,12 @@
 @using OrganizerAuditRow = TheaterInvitations.Web.Services.OrganizerAudit
 @inject OrganizerService OrganizerService
 
-<PageTitle>Audit history</PageTitle>
+<PageTitle>Historie změn</PageTitle>
 <main class="organizer-page">
-    <header><p class="eyebrow">Organizer</p><h1>Audit history</h1><OrganizerNavigation /></header>
+    <header><p class="eyebrow">Pořadatel</p><h1>Historie změn</h1><OrganizerNavigation /></header>
     <section class="rsvp-card audit-page-card">
-        <p>Review recorded organizer and invitee actions. Sensitive RSVP tokens and accessibility text are not shown here.</p>
-        <div class="party-grid-wrap"><QuickGrid TGridItem="OrganizerAuditRow" ItemsProvider="ProvideAudits" Pagination="pagination" Class="party-grid audit-grid"><PropertyColumn Property="audit => audit.OccurredAtUtc" Title="When (UTC)" Sortable="true" IsDefaultSortColumn="true" InitialSortDirection="SortDirection.Descending" /><PropertyColumn Property="audit => audit.EventType" Title="Event" Sortable="true" /><PropertyColumn Property="audit => audit.Outcome" Title="Outcome" Sortable="true" /><PropertyColumn Property="audit => audit.Actor" Title="Actor" Sortable="true" /></QuickGrid></div>
+        <p>Prohlédněte si zaznamenané kroky pořadatelů a hostů. Citlivé RSVP tokeny a text požadavků na přístupnost zde nejsou zobrazeny.</p>
+        <div class="party-grid-wrap"><QuickGrid TGridItem="OrganizerAuditRow" ItemsProvider="ProvideAudits" Pagination="pagination" Class="party-grid audit-grid"><PropertyColumn Property="audit => audit.OccurredAtUtc" Title="Kdy (UTC)" Sortable="true" IsDefaultSortColumn="true" InitialSortDirection="SortDirection.Descending" /><PropertyColumn Property="audit => audit.EventType" Title="Událost" Sortable="true" /><PropertyColumn Property="audit => audit.Outcome" Title="Výsledek" Sortable="true" /><PropertyColumn Property="audit => audit.Actor" Title="Aktér" Sortable="true" /></QuickGrid></div>
         <Paginator State="pagination" />
     </section>
 </main>

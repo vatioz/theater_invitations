@@ -4,8 +4,15 @@ using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using System.Globalization;
+using Microsoft.AspNetCore.Localization;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var czechCulture = CzechPresentationFormatter.Culture;
+CultureInfo.DefaultThreadCurrentCulture = czechCulture;
+CultureInfo.DefaultThreadCurrentUICulture = czechCulture;
+builder.Services.AddLocalization();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -66,6 +73,12 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseRequestLocalization(new RequestLocalizationOptions
+{
+    DefaultRequestCulture = new RequestCulture(czechCulture),
+    SupportedCultures = [czechCulture],
+    SupportedUICultures = [czechCulture]
+});
 app.Use(async (context, next) =>
 {
     context.Response.Headers["Referrer-Policy"] = "no-referrer";

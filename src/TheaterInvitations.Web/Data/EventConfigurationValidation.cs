@@ -24,11 +24,11 @@ public static class EventConfigurationValidation
         }
         catch (TimeZoneNotFoundException exception)
         {
-            throw new ArgumentException("Enter a valid event time-zone ID.", nameof(timeZoneId), exception);
+            throw new ArgumentException("Zadejte platný identifikátor časového pásma akce.", nameof(timeZoneId), exception);
         }
         catch (InvalidTimeZoneException exception)
         {
-            throw new ArgumentException("Enter a valid event time-zone ID.", nameof(timeZoneId), exception);
+            throw new ArgumentException("Zadejte platný identifikátor časového pásma akce.", nameof(timeZoneId), exception);
         }
     }
 
@@ -36,7 +36,7 @@ public static class EventConfigurationValidation
     {
         if (configuration.DoorsAtUtc != default && configuration.StartsAtUtc != default && configuration.DoorsAtUtc > configuration.StartsAtUtc)
         {
-            throw new InvalidOperationException("Event doors time must not be later than the start time.");
+            throw new InvalidOperationException("Čas otevření nesmí být později než začátek akce.");
         }
     }
 
@@ -47,7 +47,7 @@ public static class EventConfigurationValidation
         var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified);
         if (timeZone.IsInvalidTime(unspecified) || timeZone.IsAmbiguousTime(unspecified))
         {
-            throw new ArgumentException("Choose an unambiguous local event time.");
+            throw new ArgumentException("Zvolte jednoznačný místní čas akce.");
         }
 
         return new DateTimeOffset(unspecified, timeZone.GetUtcOffset(unspecified)).ToUniversalTime();
@@ -57,7 +57,7 @@ public static class EventConfigurationValidation
     {
         if (!MailAddress.TryCreate(email?.Trim(), out var address))
         {
-            throw new ArgumentException("Enter a valid support email address.", nameof(email));
+            throw new ArgumentException("Zadejte platnou e-mailovou adresu podpory.", nameof(email));
         }
 
         var domain = address.Host;
@@ -66,7 +66,7 @@ public static class EventConfigurationValidation
              domain.EndsWith(".example", StringComparison.OrdinalIgnoreCase) ||
              address.Address.Equals("rsvp@example.test", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new ArgumentException("Configure an approved production support email address.", nameof(email));
+            throw new ArgumentException("Nastavte schválenou produkční e-mailovou adresu podpory.", nameof(email));
         }
 
         return address.Address;

@@ -18,7 +18,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     {
         var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.FromDisplayName);
-        if (input.FromDisplayName.Trim().Length > 200 || input.DailySendCeiling <= 0) throw new ArgumentException("Enter a sender name of 200 characters or fewer and a positive daily send ceiling.");
+        if (input.FromDisplayName.Trim().Length > 200 || input.DailySendCeiling <= 0) throw new ArgumentException("Zadejte jméno odesílatele dlouhé nejvýše 200 znaků a kladný denní limit odesílání.");
         var from = PartyEmailValidation.Normalize(input.FromAddress);
         var replyTo = PartyEmailValidation.Normalize(input.ReplyToAddress);
         var settings = await db.EmailSenderConfigurations.SingleOrDefaultAsync(cancellationToken);
@@ -29,7 +29,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         }
         else if (expectedVersion is not null && settings.Version != expectedVersion)
         {
-            throw new StaleDataException("Email sender settings changed after you opened them. The current values have been loaded.");
+            throw new StaleDataException("Nastavení odesílatele e-mailů se po otevření změnilo. Byly načteny aktuální hodnoty.");
         }
 
         settings.FromDisplayName = input.FromDisplayName.Trim();
@@ -62,8 +62,8 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         var template = await db.EmailTemplates.SingleAsync(x => x.Id == templateId, cancellationToken);
-        if (template.Version != expectedVersion) throw new StaleDataException("This template changed after you opened it. The current values have been loaded.");
-        if (template.State != EmailTemplateState.Draft) throw new InvalidOperationException("Only draft templates may be approved.");
+        if (template.Version != expectedVersion) throw new StaleDataException("Tato šablona se po otevření změnila. Byly načteny aktuální hodnoty.");
+        if (template.State != EmailTemplateState.Draft) throw new InvalidOperationException("Schválit lze pouze návrh šablony.");
         template.State = EmailTemplateState.Approved;
         template.ApprovedAtUtc = clock.UtcNow;
         template.ApprovedBy = actor;
@@ -87,17 +87,17 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         {
             await using var operationDb = await dbFactory.CreateDbContextAsync(token);
             await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, token) : null;
-            var sender = await operationDb.EmailSenderConfigurations.SingleOrDefaultAsync(token) ?? throw new InvalidOperationException("Configure email sender settings before preparing a campaign.");
-            if (!sender.IsDomainVerified) throw new InvalidOperationException("Verify the sender domain before preparing a campaign.");
+            var sender = await operationDb.EmailSenderConfigurations.SingleOrDefaultAsync(token) ?? throw new InvalidOperationException("Před přípravou kampaně nastavte odesílatele e-mailů.");
+            if (!sender.IsDomainVerified) throw new InvalidOperationException("Před přípravou kampaně ověřte doménu odesílatele.");
             var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, token);
-            if (batch.State != InvitationBatchState.Committed || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Choose a committed batch with a future deadline.");
+            if (batch.State != InvitationBatchState.Committed || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Vyberte potvrzenou dávku s termínem v budoucnosti.");
             var template = await operationDb.EmailTemplates.SingleAsync(x => x.Id == templateId, token);
-            if (template.Type != EmailTemplateType.InitialInvitation || template.State != EmailTemplateState.Approved) throw new InvalidOperationException("Choose an approved initial invitation template.");
+            if (template.Type != EmailTemplateType.InitialInvitation || template.State != EmailTemplateState.Approved) throw new InvalidOperationException("Vyberte schválenou šablonu první pozvánky.");
             var recipients = await (from party in operationDb.InvitationParties
                                     join rsvpToken in operationDb.RsvpTokens on party.Id equals rsvpToken.PartyId
                                      where party.BatchId == batchId && party.Status == InvitationStatus.Pending && rsvpToken.RevokedAtUtc == null && rsvpToken.RawToken != null
                                     select new { party, rsvpToken }).ToListAsync(token);
-            if (recipients.Count == 0) throw new InvalidOperationException("The selected batch has no eligible invitation recipients.");
+            if (recipients.Count == 0) throw new InvalidOperationException("Vybraná dávka nemá žádné příjemce způsobilé pro pozvánku.");
             var campaign = new EmailCampaign { Type = EmailCampaignType.InitialInvitation, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
             operationDb.EmailCampaigns.Add(campaign);
             foreach (var recipient in recipients)
@@ -129,15 +129,15 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         var recipient = PartyEmailValidation.Normalize(recipientEmail);
         var sender = await db.EmailSenderConfigurations.SingleAsync(cancellationToken);
-        if (!sender.IsDomainVerified) throw new InvalidOperationException("Verify the sender domain before sending a test email.");
+        if (!sender.IsDomainVerified) throw new InvalidOperationException("Před odesláním zkušebního e-mailu ověřte doménu odesílatele.");
         var baseUrl = configuration.GetSection("PublicApp").Get<PublicAppOptions>()?.BaseUrl;
-        if (string.IsNullOrWhiteSpace(baseUrl)) throw new InvalidOperationException("Configure the public application base URL before sending a test email.");
+        if (string.IsNullOrWhiteSpace(baseUrl)) throw new InvalidOperationException("Před odesláním zkušebního e-mailu nastavte základní URL veřejné aplikace.");
         var template = await db.EmailTemplates.SingleAsync(x => x.Id == templateId && x.State == EmailTemplateState.Approved, cancellationToken);
         var eventConfiguration = await db.EventConfigurations.SingleAsync(cancellationToken);
         var zone = TimeZoneInfo.FindSystemTimeZoneById(eventConfiguration.TimeZoneId);
         var rendered = renderer.Render(template.Subject, template.HtmlBody, template.PlainTextBody, new EmailRenderData("Test Guest", "2 seats for you and your guest", eventConfiguration.EventName, TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("D"), TimeZoneInfo.ConvertTime(eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("t"), eventConfiguration.VenueName, eventConfiguration.VenueAddress, "Test deadline", $"{baseUrl.TrimEnd('/')}/rsvp/test-link", eventConfiguration.SupportEmail));
         var result = await emailProvider.SendAsync(new EmailProviderMessage($"{sender.FromDisplayName} <{sender.FromAddress}>", sender.ReplyToAddress, recipient, rendered.Subject, rendered.HtmlBody, rendered.PlainTextBody, $"test/{templateId:N}/{Guid.NewGuid():N}"), cancellationToken);
-        if (!result.IsAccepted) throw new InvalidOperationException("The test email was not accepted by the provider.");
+        if (!result.IsAccepted) throw new InvalidOperationException("Zkušební e-mail nebyl poskytovatelem přijat.");
     }
 
     private async Task<EmailCampaignSummary> PrepareCampaignAsync(Guid batchId, Guid templateId, EmailCampaignType type, string actor, CancellationToken cancellationToken, IReadOnlyCollection<Guid>? explicitPartyIds = null)
@@ -146,13 +146,13 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         {
             await using var operationDb = await dbFactory.CreateDbContextAsync(token);
             await using var transaction = operationDb.Database.IsRelational() ? await operationDb.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, token) : null;
-            var sender = await operationDb.EmailSenderConfigurations.SingleOrDefaultAsync(token) ?? throw new InvalidOperationException("Configure email sender settings before preparing a campaign.");
-            if (!sender.IsDomainVerified) throw new InvalidOperationException("Verify the sender domain before preparing a campaign.");
+            var sender = await operationDb.EmailSenderConfigurations.SingleOrDefaultAsync(token) ?? throw new InvalidOperationException("Před přípravou kampaně nastavte odesílatele e-mailů.");
+            if (!sender.IsDomainVerified) throw new InvalidOperationException("Před přípravou kampaně ověřte doménu odesílatele.");
             var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, token);
-            if (batch.State != InvitationBatchState.Committed || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Choose a committed batch with a future deadline.");
+            if (batch.State != InvitationBatchState.Committed || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Vyberte potvrzenou dávku s termínem v budoucnosti.");
             var template = await operationDb.EmailTemplates.SingleAsync(x => x.Id == templateId, token);
             var requiredTemplateType = type == EmailCampaignType.Reminder ? EmailTemplateType.Reminder : EmailTemplateType.InitialInvitation;
-            if (template.Type != requiredTemplateType || template.State != EmailTemplateState.Approved) throw new InvalidOperationException("Choose an approved template for this campaign type.");
+            if (template.Type != requiredTemplateType || template.State != EmailTemplateState.Approved) throw new InvalidOperationException("Vyberte schválenou šablonu pro tento typ kampaně.");
             var recipients = await (from party in operationDb.InvitationParties
                                     join rsvpToken in operationDb.RsvpTokens on party.Id equals rsvpToken.PartyId
                                     where party.BatchId == batchId && party.Status == InvitationStatus.Pending && rsvpToken.RevokedAtUtc == null && rsvpToken.RawToken != null
@@ -166,7 +166,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
                                              select dispatch.PartyId).ToListAsync(token);
                 recipients = recipients.Where(x => !remindedParties.Contains(x.party.Id)).ToList();
             }
-            if (recipients.Count == 0) throw new InvalidOperationException("The selected audience has no eligible recipients with an active RSVP token. Commit a new batch or regenerate the party's RSVP link before preparing email.");
+            if (recipients.Count == 0) throw new InvalidOperationException("Vybraný okruh nemá žádné způsobilé příjemce s aktivním tokenem RSVP. Před přípravou e-mailu potvrďte novou dávku nebo obnovte odkaz skupiny pro RSVP.");
             var campaign = new EmailCampaign { Type = type, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
             operationDb.EmailCampaigns.Add(campaign);
             foreach (var recipient in recipients) operationDb.EmailDispatches.Add(new EmailDispatch { CampaignId = campaign.Id, PartyId = recipient.party.Id, TokenId = recipient.rsvpToken.Id, RecipientEmail = recipient.party.Email, RecipientName = recipient.party.PrimaryGuestName, AllocatedSeats = recipient.party.AllocatedSeats, DeadlineUtc = batch.DeadlineUtc, IdempotencyKey = $"{type.ToString().ToLowerInvariant()}/{campaign.Id:N}/{recipient.party.Id:N}", State = EmailDispatchState.Queued });
@@ -202,8 +202,8 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         var campaign = await db.EmailCampaigns.SingleAsync(x => x.Id == campaignId, cancellationToken);
-        if (campaign.Version != expectedVersion) throw new StaleDataException("This campaign changed after you opened it. The current campaign has been loaded.");
-        if (campaign.State != EmailCampaignState.ReadyForReview) throw new InvalidOperationException("Only a review-ready campaign can be queued.");
+        if (campaign.Version != expectedVersion) throw new StaleDataException("Tato kampaň se po otevření změnila. Byla načtena aktuální kampaň.");
+        if (campaign.State != EmailCampaignState.ReadyForReview) throw new InvalidOperationException("Do fronty lze zařadit pouze kampaň připravenou ke kontrole.");
         campaign.State = EmailCampaignState.Queued;
         campaign.QueuedAtUtc = clock.UtcNow;
         AddAudit(db, "EmailCampaignQueued", "Accepted", actor, campaign.BatchId, campaign.Id, null);
@@ -214,14 +214,14 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         var campaign = await db.EmailCampaigns.SingleAsync(x => x.Id == campaignId, cancellationToken);
-        if (campaign.Version != expectedVersion) throw new StaleDataException("This campaign changed after you opened it. The current campaign has been loaded.");
-        if (campaign.State is not (EmailCampaignState.Queued or EmailCampaignState.PartiallyFailed or EmailCampaignState.Failed)) throw new InvalidOperationException("Only queued or failed campaigns can be sent.");
+        if (campaign.Version != expectedVersion) throw new StaleDataException("Tato kampaň se po otevření změnila. Byla načtena aktuální kampaň.");
+        if (campaign.State is not (EmailCampaignState.Queued or EmailCampaignState.PartiallyFailed or EmailCampaignState.Failed)) throw new InvalidOperationException("Odeslat lze pouze kampaň ve frontě nebo neúspěšnou kampaň.");
         var baseUrl = configuration.GetSection("PublicApp").Get<PublicAppOptions>()?.BaseUrl;
-        if (string.IsNullOrWhiteSpace(baseUrl)) throw new InvalidOperationException("Configure the public application base URL before sending a campaign.");
+        if (string.IsNullOrWhiteSpace(baseUrl)) throw new InvalidOperationException("Před odesláním kampaně nastavte základní URL veřejné aplikace.");
         var sender = await db.EmailSenderConfigurations.SingleAsync(cancellationToken);
-        if (!sender.IsDomainVerified) throw new InvalidOperationException("Verify the sender domain before sending a campaign.");
+        if (!sender.IsDomainVerified) throw new InvalidOperationException("Před odesláním kampaně ověřte doménu odesílatele.");
         var sentToday = await db.EmailDispatches.CountAsync(x => x.AcceptedAtUtc != null && x.AcceptedAtUtc.Value.UtcDateTime.Date == clock.UtcNow.UtcDateTime.Date, cancellationToken);
-        if (sentToday >= sender.DailySendCeiling) throw new InvalidOperationException("The configured daily send ceiling has been reached.");
+        if (sentToday >= sender.DailySendCeiling) throw new InvalidOperationException("Byl dosažen nastavený denní limit odesílání.");
         try
         {
             campaign.State = EmailCampaignState.Sending;
@@ -279,7 +279,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Subject);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.HtmlBody);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.PlainTextBody);
-        if (input.Subject.Length > 300) throw new ArgumentException("Email subject must be 300 characters or fewer.");
+        if (input.Subject.Length > 300) throw new ArgumentException("Předmět e-mailu smí mít nejvýše 300 znaků.");
         EmailTemplateRenderer.Validate(input.Subject, input.HtmlBody, input.PlainTextBody);
     }
 

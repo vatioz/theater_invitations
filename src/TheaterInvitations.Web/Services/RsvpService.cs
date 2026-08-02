@@ -69,7 +69,7 @@ public sealed class RsvpService(IDbContextFactory<InvitationDbContext> dbFactory
                 await transaction.CommitAsync(cancellationToken);
             }
 
-            throw new ArgumentException("Accessibility requirements exceed the configured limit.", nameof(submission));
+            throw new ArgumentException("Požadavky na přístupnost překračují nastavený limit.", nameof(submission));
         }
 
         if (submission.Response == RsvpResponse.Confirm && !party.IsEffectivelyExpired(batch.DeadlineUtc, nowUtc) && !configuration.IsRsvpLocked)
