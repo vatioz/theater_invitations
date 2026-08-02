@@ -90,7 +90,6 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
             entity.Property(x => x.ContentDigest).HasMaxLength(128).IsRequired();
             entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
-            entity.Property(x => x.ApprovedBy).HasMaxLength(200);
             entity.Property(x => x.Version).IsRowVersion();
             entity.HasIndex(x => new { x.Type, x.VersionNumber }).IsUnique();
         });
@@ -102,6 +101,8 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.FromAddress).HasMaxLength(320).IsRequired();
             entity.Property(x => x.ReplyToAddress).HasMaxLength(320).IsRequired();
             entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ReviewFingerprint).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.InvalidationReasonCategory).HasMaxLength(100);
             entity.Property(x => x.Version).IsRowVersion();
             entity.HasOne<InvitationBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<EmailTemplate>().WithMany().HasForeignKey(x => x.TemplateId).OnDelete(DeleteBehavior.Restrict);

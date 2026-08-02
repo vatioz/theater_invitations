@@ -12,7 +12,5 @@ public sealed class EmailTemplate
     public string ContentDigest { get; set; } = string.Empty;
     public DateTimeOffset CreatedAtUtc { get; init; }
     public string CreatedBy { get; init; } = string.Empty;
-    public DateTimeOffset? ApprovedAtUtc { get; set; }
-    public string? ApprovedBy { get; set; }
     public uint Version { get; set; }
 }

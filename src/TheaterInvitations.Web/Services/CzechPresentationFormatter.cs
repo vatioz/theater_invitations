@@ -52,13 +52,13 @@ public static class CzechPresentationFormatter
         EmailCampaignState.Completed => "Dokončeno",
         EmailCampaignState.PartiallyFailed => "Částečně neúspěšné",
         EmailCampaignState.Failed => "Neúspěšné",
+        EmailCampaignState.Invalidated => "Kontrola je neplatná",
         _ => value.ToString()
     };
 
     public static string TemplateState(EmailTemplateState value) => value switch
     {
-        EmailTemplateState.Draft => "Návrh",
-        EmailTemplateState.Approved => "Schváleno",
+        EmailTemplateState.Active => "Aktivní",
         EmailTemplateState.Retired => "Vyřazeno",
         _ => value.ToString()
     };

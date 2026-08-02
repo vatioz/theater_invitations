@@ -15,5 +15,8 @@ public sealed class EmailCampaign
     public DateTimeOffset CreatedAtUtc { get; init; }
     public string CreatedBy { get; init; } = string.Empty;
     public DateTimeOffset QueuedAtUtc { get; set; }
+    public string ReviewFingerprint { get; set; } = string.Empty;
+    public DateTimeOffset? InvalidatedAtUtc { get; set; }
+    public string? InvalidationReasonCategory { get; set; }
     public uint Version { get; set; }
 }
