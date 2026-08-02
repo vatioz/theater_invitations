@@ -6,7 +6,37 @@
 @inject NavigationManager Navigation
 
 <PageTitle>Přihlášení pořadatele</PageTitle>
-<main class="rsvp-page"><section class="rsvp-card login-card"><p class="eyebrow">Pořadatel</p><h1>Přihlášení</h1><EditForm Model="Model" OnValidSubmit="LoginAsync" FormName="login"><DataAnnotationsValidator /><ValidationSummary /><label>E-mail <InputText @bind-Value="Model.Email" /></label><label>Heslo <InputText type="password" @bind-Value="Model.Password" /></label><button type="submit">Přihlásit se</button>@if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }</EditForm></section></main>
+<main class="login-page">
+    <section class="login-card" aria-labelledby="login-title">
+        <div class="login-intro">
+            <div class="login-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+            <p class="eyebrow">Pořadatel</p>
+            <h1 id="login-title">Přihlášení</h1>
+            <p class="login-welcome">Vítejte ve správě pozvánek. Přihlaste se a pokračujte k vašemu přehledu.</p>
+            <p class="login-caption">Vaše místo za oponou pro hladký průběh celého večera.</p>
+        </div>
+        <div class="login-form-panel">
+            <EditForm Model="Model" OnValidSubmit="LoginAsync" FormName="login" class="login-form">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="login-field">
+                    <label for="login-email">E-mail</label>
+                    <InputText id="login-email" @bind-Value="Model.Email" autocomplete="email" placeholder="vas@email.cz" />
+                </div>
+                <div class="login-field">
+                    <label for="login-password">Heslo</label>
+                    <InputText id="login-password" type="password" @bind-Value="Model.Password" autocomplete="current-password" placeholder="Zadejte heslo" />
+                </div>
+                <button class="login-submit" type="submit">Přihlásit se <span aria-hidden="true">→</span></button>
+                @if (!string.IsNullOrWhiteSpace(error))
+                {
+                    <p class="validation-message" role="alert">@error</p>
+                }
+            </EditForm>
+            <p class="login-form-note">Přístup je určen pouze pro tým pořadatele.</p>
+        </div>
+    </section>
+</main>
 @code {
     [SupplyParameterFromForm] private LoginModel Model { get; set; } = new();
     private string? error;
