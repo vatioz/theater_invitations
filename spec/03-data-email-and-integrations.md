@@ -136,7 +136,7 @@ A versioned export mapping converts this model to the theater's required headers
 - Send from a verified organization-owned domain or subdomain.
 - Configure the DNS records currently required by Resend, including DKIM and SPF-related records as applicable.
 - Define and publish a DMARC policy appropriate to the organization's broader mail posture.
-- Choose approved `From`, display name, and `Reply-To` values.
+- Configure one approved application-wide `From` address and organizer `Reply-To`; configure the visible From display name on each immutable template version.
 - Store API credentials in protected application configuration or a managed secret store.
 
 No provider can guarantee inbox placement. Authentication, reputation, relevant content, clean lists, low complaint rates, and gradual testing improve deliverability.

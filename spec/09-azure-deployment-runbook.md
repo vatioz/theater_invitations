@@ -234,7 +234,6 @@ The application performs role authorization in both route policies and service m
 5. In Event settings, configure:
 
 ```text
-From display name: Theater Invitations
 From address: rsvp@your-verified-sender-domain.example
 Reply-To address: monitored mailbox
 Daily send ceiling: approved event limit
@@ -242,6 +241,8 @@ I have verified this sender domain in Resend: checked
 ```
 
 The checkbox is an organizer operational attestation. It does not perform DNS verification; Resend is the source of truth for verified-domain status.
+
+6. Create or verify each active email-template version with its intended From display name. Templates for different company-facing campaigns may use different display names, but they all use the application-wide From and Reply-To addresses above.
 
 ## Step 9: Staging Rehearsal
 
@@ -255,7 +256,7 @@ Verify all of the following:
 4. Event details, support address, deadline, and configured time-zone labels are correct.
 5. Whole-party confirm, decline, update, expiration, and global lock behave correctly.
 6. Capacity and concurrent draft commit tests remain green.
-7. Campaign template preview and test send use the verified Resend domain.
+7. Campaign template preview and test send show the selected template's display name and use the application-wide verified Resend address and organizer Reply-To.
 8. A one-recipient campaign reaches `Accepted` in the organizer UI and Resend dashboard.
 9. The generated RSVP link uses the staging public HTTPS hostname, not localhost.
 10. Logs, audit pages, and campaign pages do not reveal raw RSVP tokens, full RSVP URLs, or API keys.

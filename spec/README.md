@@ -81,6 +81,7 @@ These are implementation directions, not permission to hard-code provider assump
 9. [Azure deployment runbook](09-azure-deployment-runbook.md)
 10. [Product changes: RSVP, workflows, Czech UI, seating, import, and export](10-product-workflow-and-seating-changes.md)
 11. [Ordered implementation: Czech UI, RSVP, CSV, batches, and campaigns](11-ordered-product-change-implementation.md)
+12. [Template-specific sender display name](12-template-sender-display-name.md)
 
 ## Guiding Principles
 

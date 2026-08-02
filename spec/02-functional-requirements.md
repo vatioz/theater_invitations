@@ -117,6 +117,9 @@ remaining capacity = 50
 - **FR-102** One confirmed `Send now` action from campaign review must begin server-side sending; the workflow must not require a separate confirm-to-queue action followed by another confirmed send action.
 - **FR-103** Reaching the configured daily ceiling must pause the campaign with sent and remaining counts and the earliest continuation date. An authorized organizer may continue after reset without another confirmation.
 - **FR-104** Campaign detail must allow an organizer to select prior recipients for an auditable resend using their current active links, subject to current eligibility and suppression checks.
+- **FR-105** Each saved email-template version must define its required From display name. Initial, reminder, resend, preview, and test-send operations must use the selected template version's display name.
+- **FR-106** The From address and Reply-To address must remain application-wide sender settings and must not be overridable by a template, batch, campaign request, or recipient.
+- **FR-107** Campaign preparation must snapshot the template display name with the application-wide From and Reply-To addresses. Historical campaign sender snapshots must remain unchanged when templates or settings change.
 
 ## Export and Handoff
 
