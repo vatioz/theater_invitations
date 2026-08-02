@@ -94,6 +94,48 @@ public sealed class RsvpServiceTests
         Assert.Equal("accessibility-limit-exceeded", (await db.AuditEvents.SingleAsync()).ReasonCategory);
     }
 
+    [Theory]
+    [InlineData(RsvpResponse.Confirm)]
+    [InlineData(RsvpResponse.Decline)]
+    public async Task Recorded_response_cannot_change_at_deadline(RsvpResponse initialResponse)
+    {
+        await using var db = CreateDb();
+        var clock = new MutableClock(Now);
+        var party = await SeedAsync(db, capacity: 2, deadlineUtc: Now.AddHours(1));
+        var service = CreateService(db, clock);
+
+        await service.SubmitAsync("valid-token", new RsvpSubmission(initialResponse, "Ramp access"), "request-initial");
+        clock.UtcNow = Now.AddHours(1);
+
+        var result = await service.SubmitAsync("valid-token", new RsvpSubmission(
+            initialResponse == RsvpResponse.Confirm ? RsvpResponse.Decline : RsvpResponse.Confirm,
+            "Changed"), "request-after-deadline");
+
+        Assert.Equal(RsvpResult.Expired, result.Result);
+        db.ChangeTracker.Clear();
+        party = await db.InvitationParties.SingleAsync(x => x.Id == party.Id);
+        Assert.Equal(initialResponse == RsvpResponse.Confirm ? InvitationStatus.Confirmed : InvitationStatus.Declined, party.Status);
+        Assert.Equal(initialResponse == RsvpResponse.Confirm ? "Ramp access" : null, party.AccessibilityRequirements);
+        Assert.Equal("expired", (await db.AuditEvents.OrderByDescending(x => x.OccurredAtUtc).FirstAsync()).ReasonCategory);
+    }
+
+    [Fact]
+    public async Task Declining_before_deadline_clears_previous_accessibility_text()
+    {
+        await using var db = CreateDb();
+        var party = await SeedAsync(db, capacity: 2, deadlineUtc: Now.AddHours(1));
+        var service = CreateService(db);
+
+        await service.SubmitAsync("valid-token", new RsvpSubmission(RsvpResponse.Confirm, "Ramp access"), "request-confirm");
+        var result = await service.SubmitAsync("valid-token", new RsvpSubmission(RsvpResponse.Decline, "Should not persist"), "request-decline");
+
+        Assert.Equal(RsvpResult.Applied, result.Result);
+        db.ChangeTracker.Clear();
+        party = await db.InvitationParties.SingleAsync(x => x.Id == party.Id);
+        Assert.Equal(InvitationStatus.Declined, party.Status);
+        Assert.Null(party.AccessibilityRequirements);
+    }
+
     private static InvitationDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<InvitationDbContext>()
@@ -102,7 +144,9 @@ public sealed class RsvpServiceTests
         return new InvitationDbContext(options);
     }
 
-    private static RsvpService CreateService(InvitationDbContext db) => new(new TestDbContextFactory(db), new FixedClock(Now), new TransactionRetry());
+    private static RsvpService CreateService(InvitationDbContext db) => CreateService(db, new FixedClock(Now));
+
+    private static RsvpService CreateService(InvitationDbContext db, IClock clock) => new(new TestDbContextFactory(db), clock, new TransactionRetry());
 
     private static async Task<InvitationParty> SeedAsync(InvitationDbContext db, int capacity, DateTimeOffset deadlineUtc, bool isLocked = false, int seats = 1, int accessibilityTextLimit = 500)
     {
@@ -137,6 +181,11 @@ public sealed class RsvpServiceTests
     private sealed class FixedClock(DateTimeOffset nowUtc) : IClock
     {
         public DateTimeOffset UtcNow => nowUtc;
+    }
+
+    private sealed class MutableClock(DateTimeOffset nowUtc) : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = nowUtc;
     }
 
     private sealed class TestDbContextFactory(InvitationDbContext db) : IDbContextFactory<InvitationDbContext>
