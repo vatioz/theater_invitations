@@ -8,5 +8,6 @@ public enum EmailCampaignState
     Sending = 3,
     Completed = 4,
     PartiallyFailed = 5,
-    Failed = 6
+    Failed = 6,
+    Invalidated = 7
 }
