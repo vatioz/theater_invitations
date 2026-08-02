@@ -39,8 +39,7 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
         }
 
         var configuration = await db.EventConfigurations.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
-        var isExpired = partyInvitation.Status == InvitationStatus.Expired ||
-            (partyInvitation.Status == InvitationStatus.Pending && clock.UtcNow >= partyInvitation.DeadlineUtc);
+        var nowUtc = clock.UtcNow;
         return new RsvpInvitation(
             partyInvitation.PrimaryGuestName,
             partyInvitation.AllocatedSeats,
@@ -57,9 +56,9 @@ public sealed class RsvpInvitationService(InvitationDbContext db, IClock clock)
             partyInvitation.Status,
             configuration?.IsRsvpLocked ?? false,
             partyInvitation.AccessibilityRequirements,
-            partyInvitation.Version)
+            partyInvitation.Version,
+            nowUtc)
         {
-            IsExpired = isExpired,
             IsConfigurationAvailable = configuration is not null
         };
     }

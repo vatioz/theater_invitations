@@ -18,6 +18,11 @@ public sealed class InvitationParty
     public bool IsEffectivelyExpired(DateTimeOffset deadlineUtc, DateTimeOffset nowUtc) =>
         Status == InvitationStatus.Expired || (Status == InvitationStatus.Pending && nowUtc >= deadlineUtc);
 
+    public bool HasRecordedResponse => Status is InvitationStatus.Confirmed or InvitationStatus.Declined;
+
+    public bool IsResponseWindowClosed(DateTimeOffset deadlineUtc, bool isLocked, DateTimeOffset nowUtc) =>
+        isLocked || nowUtc >= deadlineUtc || Status == InvitationStatus.Expired;
+
     public RsvpResult Respond(RsvpResponse response, string? accessibilityRequirements, DateTimeOffset deadlineUtc, bool isLocked, DateTimeOffset nowUtc)
     {
         if (isLocked)
@@ -25,11 +30,20 @@ public sealed class InvitationParty
             return RsvpResult.Locked;
         }
 
-        if (IsEffectivelyExpired(deadlineUtc, nowUtc))
+        if (nowUtc >= deadlineUtc)
         {
-            Status = InvitationStatus.Expired;
-            ExpirationSource = ExpirationSource.SystemDeadline;
-            AccessibilityRequirements = null;
+            if (Status == InvitationStatus.Pending)
+            {
+                Status = InvitationStatus.Expired;
+                ExpirationSource = ExpirationSource.SystemDeadline;
+                AccessibilityRequirements = null;
+            }
+
+            return RsvpResult.Expired;
+        }
+
+        if (Status == InvitationStatus.Expired)
+        {
             return RsvpResult.Expired;
         }
 

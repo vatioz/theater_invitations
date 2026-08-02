@@ -1,8 +1,11 @@
 @using TheaterInvitations.Web.Services
 
-<section class="event-details" aria-labelledby="event-details-heading">
+<section class="event-details" aria-label="Informace o akci">
     <p class="eyebrow">Informace o akci</p>
-    <h2 id="event-details-heading">@Invitation.EventName</h2>
+    @if (ShowEventName)
+    {
+        <h2>@Invitation.EventName</h2>
+    }
     <dl>
         <div><dt>Datum</dt><dd><time datetime="@LocalStart.ToString("yyyy-MM-dd")">@CzechPresentationFormatter.FormatPublicDate(Invitation.StartsAtUtc, TimeZone)</time></dd></div>
         <div><dt>Otevření</dt><dd><time datetime="@Invitation.DoorsAtUtc.ToString("O")">@CzechPresentationFormatter.FormatPublicTime(Invitation.DoorsAtUtc, TimeZone)</time></dd></div>
@@ -18,6 +21,7 @@
 
 @code {
     [Parameter, EditorRequired] public RsvpInvitation Invitation { get; set; } = default!;
+    [Parameter] public bool ShowEventName { get; set; } = true;
 
     private TimeZoneInfo TimeZone => TimeZoneInfo.FindSystemTimeZoneById(Invitation.TimeZoneId);
     private DateTimeOffset LocalDoors => TimeZoneInfo.ConvertTime(Invitation.DoorsAtUtc, TimeZone);

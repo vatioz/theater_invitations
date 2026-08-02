@@ -18,9 +18,13 @@ public sealed record RsvpInvitation(
     InvitationStatus Status,
     bool IsLocked,
     string? AccessibilityRequirements,
-    uint Version)
+    uint Version,
+    DateTimeOffset NowUtc)
 {
-    public bool IsExpired { get; init; }
+    public bool IsDeadlinePassed => NowUtc >= DeadlineUtc;
+    public bool IsExpired => Status == InvitationStatus.Expired || (Status == InvitationStatus.Pending && IsDeadlinePassed);
+    public bool HasRecordedResponse => Status is InvitationStatus.Confirmed or InvitationStatus.Declined;
+    public bool CanRespond => IsConfigurationAvailable && !IsLocked && !IsDeadlinePassed && !IsExpired;
     public bool IsConfigurationAvailable { get; init; }
     public bool HasEventDetails =>
         !string.IsNullOrWhiteSpace(EventName) &&

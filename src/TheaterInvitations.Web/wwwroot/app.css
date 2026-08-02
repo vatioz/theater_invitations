@@ -43,10 +43,19 @@ body { margin: 0; background: #f4f0e8; color: #1e2930; font-family: Georgia, "Ti
 .rsvp-page { display: grid; min-height: 100vh; place-items: center; padding: 2rem 1rem; }
 .rsvp-card { width: min(100%, 42rem); padding: clamp(1.5rem, 5vw, 3rem); border-top: 6px solid #a74420; background: #fffdf8; box-shadow: 0 1rem 3rem rgb(30 41 48 / 12%); }
 .rsvp-card h1 { font-size: clamp(2rem, 7vw, 3.6rem); line-height: 1; margin: .25rem 0 1.5rem; }
+.guest-heading { margin: -0.75rem 0 1.5rem; font-size: clamp(1.35rem, 4vw, 2rem); font-weight: normal; }
 .eyebrow { color: #a74420; font-family: Arial, sans-serif; font-size: .8rem; font-weight: bold; letter-spacing: .12em; text-transform: uppercase; }
 .notice, .deadline { padding: 1rem; background: #edf2ee; }
 fieldset { display: grid; gap: .85rem; margin: 1.5rem 0 0; padding: 0; border: 0; }
 legend { font-weight: bold; margin-bottom: .5rem; }
+.rsvp-actions { margin-top: 1.5rem; }
+.response-actions, .decline-confirmation { display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; }
+.accessibility-toggle { padding: 0; color: #35434a; background: transparent; text-decoration: underline; text-underline-offset: .2em; }
+.accessibility-toggle:hover { background: transparent; color: #a74420; }
+.accessibility-request { display: grid; gap: .6rem; padding: 1rem; border: 1px solid #d8d1c4; background: #faf7f0; }
+.accessibility-request p { margin: 0; color: #58656a; font: .9rem/1.45 Arial, sans-serif; }
+.decline-confirmation { padding: 1rem; border-left: 4px solid #a74420; background: #f7eee6; }
+.decline-confirmation p { flex-basis: 100%; margin: 0; }
 label { font-family: Arial, sans-serif; }
 textarea { width: 100%; min-height: 7rem; resize: vertical; }
 button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a74420; color: white; cursor: pointer; font: inherit; }

@@ -16,19 +16,19 @@
             <p>Odkaz může být neplatný, jeho platnost mohla skončit nebo už není aktivní. Obraťte se prosím na pořadatele akce.</p>
         </section>
     }
-    else if (invitation.IsLocked)
-    {
-        <UnavailableView Heading="Odpovědi na pozvání jsou uzavřeny" Invitation="invitation" />
-    }
     else if (!invitation.IsConfigurationAvailable)
     {
         <UnavailableView Heading="Potvrzení účasti je dočasně nedostupné" Invitation="invitation" />
     }
-    else if (invitation.IsExpired)
+    else if (invitation.IsLocked && !invitation.HasRecordedResponse)
+    {
+        <UnavailableView Heading="Odpovědi na pozvání jsou uzavřeny" Invitation="invitation" />
+    }
+    else if (invitation.IsExpired && !invitation.HasRecordedResponse)
     {
         <UnavailableView Heading="Termín pro potvrzení účasti vypršel" Invitation="invitation" />
     }
-    else if (submitted || (invitation.Status is InvitationStatus.Confirmed or InvitationStatus.Declined && !editing))
+    else if (submitted || (invitation.HasRecordedResponse && (!editing || !invitation.CanRespond)))
     {
         <section class="rsvp-card" aria-labelledby="recorded-heading">
             <p class="eyebrow">Odpověď zaznamenána</p>
@@ -36,7 +36,7 @@
             <p>@StatusMessage()</p>
             <p>Pozvání zahrnuje @SeatDescription(invitation.AllocatedSeats).</p>
             @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
-            @if (!submitted)
+            @if (!submitted && invitation.CanRespond)
             {
                 <button type="button" @onclick="BeginEditing">Upravit odpověď</button>
             }
@@ -46,14 +46,22 @@
     {
         <section class="rsvp-card" aria-labelledby="rsvp-heading">
             <p class="eyebrow">Pozvání do divadla</p>
-            <h1 id="rsvp-heading">Potvrdíte účast, @invitation.PrimaryGuestName?</h1>
+            @if (invitation.HasEventDetails)
+            {
+                <h1 id="rsvp-heading">@invitation.EventName</h1>
+                <h2 class="guest-heading">@invitation.PrimaryGuestName</h2>
+            }
+            else
+            {
+                <h1 id="rsvp-heading">Potvrzení účasti pro @invitation.PrimaryGuestName</h1>
+            }
             <p>Pozvání zahrnuje @SeatDescription(invitation.AllocatedSeats).</p>
             @if (invitation.AllocatedSeats > 1)
             {
                 <p class="notice">Vaše odpověď potvrzuje nebo odmítá celou rezervaci pro skupinu.</p>
             }
             <p class="deadline">Odpovězte prosím do <strong>@FormatDeadline(invitation)</strong>.</p>
-            @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
+            @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" ShowEventName="false" /> }
 
             @if (!string.IsNullOrEmpty(error))
             {
@@ -64,23 +72,33 @@
                 }
             }
 
-            <EditForm Model="model" OnValidSubmit="SubmitAsync" FormName="rsvp">
-                <DataAnnotationsValidator />
-                <fieldset disabled="@submitting">
-                    <legend>Vaše odpověď</legend>
-                    <InputRadioGroup @bind-Value="model.Response">
-                        <label><InputRadio Value="RsvpResponse.Confirm" /> Potvrdit účast</label>
-                        <label><InputRadio Value="RsvpResponse.Decline" /> Odmítnout účast</label>
-                    </InputRadioGroup>
-                    @if (model.Response == RsvpResponse.Confirm)
-                    {
-                        <label for="accessibility">Požadavky na přístupnost (nepovinné)</label>
-                        <p id="accessibility-help">Uveďte jen údaje, které pomohou místu zajistit podporu pro vaši skupinu. Maximum @invitation.AccessibilityTextLimit znaků.</p>
+            <fieldset disabled="@submitting" class="rsvp-actions">
+                <legend>Vaše odpověď</legend>
+                <div class="response-actions">
+                    <button type="button" @onclick="(() => SubmitAsync(RsvpResponse.Confirm))">@(submitting ? "Ukládání..." : "Potvrdit účast")</button>
+                    <button type="button" class="button-secondary" @onclick="BeginDecline" disabled="@submitting">Odmítnout účast</button>
+                </div>
+                @if (showAccessibilityField)
+                {
+                    <div class="accessibility-request">
+                        <label for="accessibility">Jakou podporu potřebujete pro svou skupinu?</label>
+                        <p id="accessibility-help">Toto pole vyplňte pouze, pokud potřebujete zajistit přístupnost nebo jinou podporu. Maximum @invitation.AccessibilityTextLimit znaků.</p>
                         <InputTextArea id="accessibility" @bind-Value="model.AccessibilityRequirements" maxlength="@invitation.AccessibilityTextLimit" aria-describedby="accessibility-help" />
-                    }
-                    <button type="submit">@(submitting ? "Ukládání..." : "Odeslat odpověď")</button>
-                </fieldset>
-            </EditForm>
+                    </div>
+                }
+                else
+                {
+                    <button type="button" class="accessibility-toggle" @onclick="ShowAccessibilityField" disabled="@submitting">Potřebuji zajistit přístupnost nebo jinou podporu</button>
+                }
+                @if (confirmingDecline)
+                {
+                    <div class="decline-confirmation" role="alert" tabindex="-1">
+                        <p>Opravdu chcete odmítnout účast celé skupiny?</p>
+                        <button type="button" @onclick="(() => SubmitAsync(RsvpResponse.Decline))">Ano, odmítnout účast</button>
+                        <button type="button" class="button-secondary" @onclick="CancelDecline" disabled="@submitting">Zrušit</button>
+                    </div>
+                }
+            </fieldset>
         </section>
     }
 </main>
@@ -93,6 +111,8 @@
     private bool submitting;
     private bool submitted;
     private bool editing;
+    private bool confirmingDecline;
+    private bool showAccessibilityField;
     private bool showSupportContact;
     private string? error;
 
@@ -103,6 +123,7 @@
         {
             model.Response = invitation.Status == InvitationStatus.Confirmed ? RsvpResponse.Confirm : RsvpResponse.Decline;
             model.AccessibilityRequirements = invitation.AccessibilityRequirements;
+            showAccessibilityField = !string.IsNullOrWhiteSpace(model.AccessibilityRequirements);
         }
     }
 
@@ -112,20 +133,30 @@
         {
             model.Response = invitation.Status == InvitationStatus.Confirmed ? RsvpResponse.Confirm : RsvpResponse.Decline;
             model.AccessibilityRequirements = invitation.AccessibilityRequirements;
+            showAccessibilityField = !string.IsNullOrWhiteSpace(model.AccessibilityRequirements);
         }
 
         editing = true;
         submitted = false;
+        confirmingDecline = false;
     }
 
-    private async Task SubmitAsync()
+    private void BeginDecline() => confirmingDecline = true;
+
+    private void CancelDecline() => confirmingDecline = false;
+
+    private void ShowAccessibilityField() => showAccessibilityField = true;
+
+    private async Task SubmitAsync(RsvpResponse response)
     {
         submitting = true;
         error = null;
         showSupportContact = false;
         try
         {
-            var result = await RsvpService.SubmitAsync(Token, new RsvpSubmission(model.Response, model.AccessibilityRequirements, invitation?.Version), Guid.NewGuid().ToString("N"));
+            model.Response = response;
+            var accessibilityRequirements = response == RsvpResponse.Confirm ? model.AccessibilityRequirements : null;
+            var result = await RsvpService.SubmitAsync(Token, new RsvpSubmission(response, accessibilityRequirements, invitation?.Version), Guid.NewGuid().ToString("N"));
             invitation = await InvitationService.GetAsync(Token);
             if (!result.IsValidToken || result.Result is RsvpResult.Locked or RsvpResult.Expired or RsvpResult.CapacityExceeded or RsvpResult.Stale)
             {
@@ -141,6 +172,7 @@
 
             submitted = true;
             editing = false;
+            confirmingDecline = false;
         }
         catch (ArgumentException)
         {
