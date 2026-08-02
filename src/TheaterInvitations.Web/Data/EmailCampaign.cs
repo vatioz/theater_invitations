@@ -6,6 +6,7 @@ public sealed class EmailCampaign
     public EmailCampaignType Type { get; set; }
     public EmailCampaignState State { get; set; }
     public Guid BatchId { get; init; }
+    public Guid? SourceCampaignId { get; init; }
     public Guid TemplateId { get; init; }
     public int TemplateVersionNumber { get; init; }
     public string TemplateDigest { get; init; } = string.Empty;
