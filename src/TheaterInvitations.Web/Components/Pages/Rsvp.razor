@@ -6,53 +6,53 @@
 @inject RsvpInvitationService InvitationService
 @inject RsvpService RsvpService
 
-<PageTitle>RSVP</PageTitle>
+<PageTitle>Potvrzení účasti</PageTitle>
 
 <main class="rsvp-page">
     @if (invitation is null)
     {
         <section class="rsvp-card" aria-labelledby="invalid-link-heading">
-            <h1 id="invalid-link-heading">This RSVP link is not available</h1>
-            <p>The link may be invalid, expired, or no longer active. Please contact the event organizer for help.</p>
+            <h1 id="invalid-link-heading">Odkaz pro potvrzení účasti není dostupný</h1>
+            <p>Odkaz může být neplatný, jeho platnost mohla skončit nebo už není aktivní. Obraťte se prosím na pořadatele akce.</p>
         </section>
     }
     else if (invitation.IsLocked)
     {
-        <UnavailableView Heading="RSVP responses are closed" Invitation="invitation" />
+        <UnavailableView Heading="Odpovědi na pozvání jsou uzavřeny" Invitation="invitation" />
     }
     else if (!invitation.IsConfigurationAvailable)
     {
-        <UnavailableView Heading="RSVP is temporarily unavailable" Invitation="invitation" />
+        <UnavailableView Heading="Potvrzení účasti je dočasně nedostupné" Invitation="invitation" />
     }
     else if (invitation.IsExpired)
     {
-        <UnavailableView Heading="The RSVP deadline has passed" Invitation="invitation" />
+        <UnavailableView Heading="Termín pro potvrzení účasti vypršel" Invitation="invitation" />
     }
     else if (submitted || (invitation.Status is InvitationStatus.Confirmed or InvitationStatus.Declined && !editing))
     {
         <section class="rsvp-card" aria-labelledby="recorded-heading">
-            <p class="eyebrow">Response recorded</p>
-            <h1 id="recorded-heading">Thank you, @invitation.PrimaryGuestName</h1>
+            <p class="eyebrow">Odpověď zaznamenána</p>
+            <h1 id="recorded-heading">Děkujeme, @invitation.PrimaryGuestName</h1>
             <p>@StatusMessage()</p>
-            <p>This invitation covers @SeatDescription(invitation.AllocatedSeats).</p>
+            <p>Pozvání zahrnuje @SeatDescription(invitation.AllocatedSeats).</p>
             @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
             @if (!submitted)
             {
-                <button type="button" @onclick="BeginEditing">Update RSVP</button>
+                <button type="button" @onclick="BeginEditing">Upravit odpověď</button>
             }
         </section>
     }
     else
     {
         <section class="rsvp-card" aria-labelledby="rsvp-heading">
-            <p class="eyebrow">Theater invitation</p>
-            <h1 id="rsvp-heading">Will you join us, @invitation.PrimaryGuestName?</h1>
-            <p>This invitation covers @SeatDescription(invitation.AllocatedSeats).</p>
+            <p class="eyebrow">Pozvání do divadla</p>
+            <h1 id="rsvp-heading">Potvrdíte účast, @invitation.PrimaryGuestName?</h1>
+            <p>Pozvání zahrnuje @SeatDescription(invitation.AllocatedSeats).</p>
             @if (invitation.AllocatedSeats > 1)
             {
-                <p class="notice">Your response confirms or declines the complete party allocation.</p>
+                <p class="notice">Vaše odpověď potvrzuje nebo odmítá celou rezervaci pro skupinu.</p>
             }
-            <p class="deadline">Please respond by <strong>@FormatDeadline(invitation)</strong>.</p>
+            <p class="deadline">Odpovězte prosím do <strong>@FormatDeadline(invitation)</strong>.</p>
             @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
 
             @if (!string.IsNullOrEmpty(error))
@@ -67,18 +67,18 @@
             <EditForm Model="model" OnValidSubmit="SubmitAsync" FormName="rsvp">
                 <DataAnnotationsValidator />
                 <fieldset disabled="@submitting">
-                    <legend>Your response</legend>
+                    <legend>Vaše odpověď</legend>
                     <InputRadioGroup @bind-Value="model.Response">
-                        <label><InputRadio Value="RsvpResponse.Confirm" /> Confirm attendance</label>
-                        <label><InputRadio Value="RsvpResponse.Decline" /> Decline attendance</label>
+                        <label><InputRadio Value="RsvpResponse.Confirm" /> Potvrdit účast</label>
+                        <label><InputRadio Value="RsvpResponse.Decline" /> Odmítnout účast</label>
                     </InputRadioGroup>
                     @if (model.Response == RsvpResponse.Confirm)
                     {
-                        <label for="accessibility">Accessibility requirements (optional)</label>
-                        <p id="accessibility-help">Share only details that help the venue support your party. Maximum @invitation.AccessibilityTextLimit characters.</p>
+                        <label for="accessibility">Požadavky na přístupnost (nepovinné)</label>
+                        <p id="accessibility-help">Uveďte jen údaje, které pomohou místu zajistit podporu pro vaši skupinu. Maximum @invitation.AccessibilityTextLimit znaků.</p>
                         <InputTextArea id="accessibility" @bind-Value="model.AccessibilityRequirements" maxlength="@invitation.AccessibilityTextLimit" aria-describedby="accessibility-help" />
                     }
-                    <button type="submit">@(submitting ? "Saving..." : "Submit RSVP")</button>
+                    <button type="submit">@(submitting ? "Ukládání..." : "Odeslat odpověď")</button>
                 </fieldset>
             </EditForm>
         </section>
@@ -131,9 +131,9 @@
             {
                 error = result.Result switch
                 {
-                    RsvpResult.CapacityExceeded => "We could not record a confirmation because no seats are available.",
-                    RsvpResult.Stale => "This RSVP changed in another session. The latest response is shown; please review it before trying again.",
-                    _ => "This RSVP is no longer available."
+                    RsvpResult.CapacityExceeded => "Potvrzení se nepodařilo zaznamenat, protože už nejsou volná místa.",
+                    RsvpResult.Stale => "Tato odpověď byla změněna v jiné relaci. Je zobrazena aktuální odpověď; před dalším pokusem ji zkontrolujte.",
+                    _ => "Potvrzení účasti už není dostupné."
                 };
                 showSupportContact = result.Result == RsvpResult.CapacityExceeded;
                 return;
@@ -144,7 +144,7 @@
         }
         catch (ArgumentException)
         {
-            error = "Please shorten the accessibility requirements and try again.";
+            error = "Zkraťte prosím požadavky na přístupnost a zkuste to znovu.";
         }
         catch (TransactionConflictException exception)
         {
@@ -154,7 +154,7 @@
         }
         catch (DbUpdateException)
         {
-            error = "We could not save your response. It is safe to try again.";
+            error = "Odpověď se nepodařilo uložit. Můžete to bezpečně zkusit znovu.";
             showSupportContact = true;
             invitation = await InvitationService.GetAsync(Token);
         }
@@ -164,21 +164,16 @@
         }
     }
 
-    private static string SeatDescription(int seats) => seats switch
-    {
-        1 => "1 seat",
-        2 => "2 seats for you and your guest",
-        _ => $"{seats} seats for your party"
-    };
+    private static string SeatDescription(int seats) => CzechPresentationFormatter.Seats(seats);
 
     private string StatusMessage() => model.Response == RsvpResponse.Confirm
-        ? "Your party is confirmed."
-        : "Your party has been declined.";
+        ? "Účast vaší skupiny je potvrzena."
+        : "Účast vaší skupiny byla odmítnuta.";
 
     private static string FormatDeadline(RsvpInvitation invitation)
     {
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(invitation.TimeZoneId);
-        return TimeZoneInfo.ConvertTime(invitation.DeadlineUtc, timeZone).ToString("f") + $" ({invitation.TimeZoneId})";
+        return CzechPresentationFormatter.FormatPublicDateTime(invitation.DeadlineUtc, timeZone);
     }
 
     private sealed class RsvpModel

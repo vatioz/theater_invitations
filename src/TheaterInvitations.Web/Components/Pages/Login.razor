@@ -5,8 +5,8 @@
 @inject SignInManager<ApplicationUser> SignInManager
 @inject NavigationManager Navigation
 
-<PageTitle>Organizer sign in</PageTitle>
-<main class="rsvp-page"><section class="rsvp-card login-card"><p class="eyebrow">Organizer</p><h1>Sign in</h1><EditForm Model="Model" OnValidSubmit="LoginAsync" FormName="login"><DataAnnotationsValidator /><ValidationSummary /><label>Email <InputText @bind-Value="Model.Email" /></label><label>Password <InputText type="password" @bind-Value="Model.Password" /></label><button type="submit">Sign in</button>@if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }</EditForm></section></main>
+<PageTitle>Přihlášení pořadatele</PageTitle>
+<main class="rsvp-page"><section class="rsvp-card login-card"><p class="eyebrow">Pořadatel</p><h1>Přihlášení</h1><EditForm Model="Model" OnValidSubmit="LoginAsync" FormName="login"><DataAnnotationsValidator /><ValidationSummary /><label>E-mail <InputText @bind-Value="Model.Email" /></label><label>Heslo <InputText type="password" @bind-Value="Model.Password" /></label><button type="submit">Přihlásit se</button>@if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }</EditForm></section></main>
 @code {
     [SupplyParameterFromForm] private LoginModel Model { get; set; } = new();
     private string? error;
@@ -15,9 +15,9 @@
         error = null;
         var result = await SignInManager.PasswordSignInAsync(Model.Email.Trim(), Model.Password, false, true);
         if (result.Succeeded) Navigation.NavigateTo("/organizer", true);
-        else if (result.IsLockedOut) error = "This account is temporarily locked after repeated failed sign-in attempts.";
-        else if (result.IsNotAllowed) error = "This organizer account is not allowed to sign in.";
-        else error = "Sign-in failed. Check the email and password.";
+        else if (result.IsLockedOut) error = "Účet je po opakovaných neúspěšných pokusech dočasně uzamčen.";
+        else if (result.IsNotAllowed) error = "K tomuto účtu pořadatele není přihlášení povoleno.";
+        else error = "Přihlášení se nezdařilo. Zkontrolujte e-mail a heslo.";
     }
     private sealed class LoginModel { public string Email { get; set; } = string.Empty; public string Password { get; set; } = string.Empty; }
 }

@@ -17,14 +17,14 @@ public sealed class OrganizerAuthorization(AuthenticationStateProvider authentic
         var user = (await authenticationStateProvider.GetAuthenticationStateAsync()).User;
         if (user.Identity?.IsAuthenticated != true || user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value is not { } userId || await users.FindByIdAsync(userId) is not { IsDisabled: false })
         {
-            throw new UnauthorizedAccessException("An active authenticated organizer account is required.");
+            throw new UnauthorizedAccessException("Je vyžadován aktivní přihlášený účet pořadatele.");
         }
         var result = await authorizationService.AuthorizeAsync(user, null, policy);
         if (!result.Succeeded)
         {
-            throw new UnauthorizedAccessException($"The '{policy}' organizer permission is required.");
+            throw new UnauthorizedAccessException($"Je vyžadováno oprávnění pořadatele „{policy}“.");
         }
 
-        return user.Identity?.Name ?? throw new UnauthorizedAccessException("An authenticated organizer identity is required.");
+        return user.Identity?.Name ?? throw new UnauthorizedAccessException("Je vyžadována přihlášená identita pořadatele.");
     }
 }

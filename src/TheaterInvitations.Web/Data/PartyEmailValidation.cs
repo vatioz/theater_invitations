@@ -10,7 +10,7 @@ public static class PartyEmailValidation
         if (!MailAddress.TryCreate(value, out var address) ||
             !address.Address.Equals(value, StringComparison.OrdinalIgnoreCase))
         {
-            throw new ArgumentException("Enter a valid email address.", nameof(email));
+            throw new ArgumentException("Zadejte platnou e-mailovou adresu.", nameof(email));
         }
 
         return value;

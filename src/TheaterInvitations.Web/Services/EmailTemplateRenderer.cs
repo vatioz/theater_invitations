@@ -15,7 +15,7 @@ public sealed class EmailTemplateRenderer
     {
         foreach (var match in Placeholder.Matches(subject).Cast<Match>().Concat(Placeholder.Matches(htmlBody).Cast<Match>()).Concat(Placeholder.Matches(plainTextBody).Cast<Match>()))
         {
-            if (!Supported.Contains(match.Groups[1].Value)) throw new ArgumentException($"Unsupported email placeholder '{{{{{match.Groups[1].Value}}}}}'.");
+            if (!Supported.Contains(match.Groups[1].Value)) throw new ArgumentException($"Nepodporovaný zástupný symbol e-mailu '{{{{{match.Groups[1].Value}}}}}'.");
         }
     }
 

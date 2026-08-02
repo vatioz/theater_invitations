@@ -4,19 +4,19 @@
 @using TheaterInvitations.Web.Services
 @inject OrganizerService OrganizerService
 
-<PageTitle>Organizer overview</PageTitle>
+<PageTitle>Přehled pořadatele</PageTitle>
 
 <main class="organizer-page">
     <header>
-        <p class="eyebrow">Organizer</p>
-        <h1>Invitation administration</h1>
-        <p><a href="/account/logout">Sign out</a></p>
+        <p class="eyebrow">Pořadatel</p>
+        <h1>Správa pozvánek</h1>
+        <p><a href="/account/logout">Odhlásit se</a></p>
         <OrganizerNavigation />
     </header>
 
     @if (dashboard is null)
     {
-        <p>Loading invitation data...</p>
+            <p>Načítání údajů o pozvánkách...</p>
     }
     else
     {
@@ -24,62 +24,62 @@
         {
             <p class="validation-message" role="alert">@actionError</p>
         }
-        <section class="metrics" aria-label="Invitation metrics">
-            <p><strong>@dashboard.ConfirmedSeats</strong> confirmed seats</p>
-            <p><strong>@dashboard.ActivePendingSeats</strong> active pending seats</p>
-            <p><strong>@dashboard.RemainingCapacity</strong> remaining seats</p>
-            <p><strong>@dashboard.PartyCount</strong> parties</p>
+        <section class="metrics" aria-label="Přehled pozvánek">
+            <p><strong>@dashboard.ConfirmedSeats</strong> potvrzených míst</p>
+            <p><strong>@dashboard.ActivePendingSeats</strong> míst čekajících na odpověď</p>
+            <p><strong>@dashboard.RemainingCapacity</strong> zbývajících míst</p>
+            <p><strong>@dashboard.PartyCount</strong> skupin</p>
         </section>
 
         <div class="overview-grid">
             <section class="rsvp-card overview-card">
-                <h2>RSVP status</h2>
-                <p>Guest RSVP is currently <strong>@(dashboard.IsRsvpLocked ? "locked" : "open")</strong>.</p>
+                <h2>Stav potvrzování účasti</h2>
+                <p>Potvrzování účasti hostů je nyní <strong>@(dashboard.IsRsvpLocked ? "uzavřeno" : "otevřeno")</strong>.</p>
                 @if (dashboard.Configuration is null)
                 {
-                    <p class="validation-message">Event configuration is incomplete. RSVP submissions are unavailable.</p>
+                    <p class="validation-message">Nastavení akce není úplné. Potvrzování účasti není dostupné.</p>
                 }
                 else
                 {
-                    <p>Support: @(string.IsNullOrWhiteSpace(dashboard.Configuration.SupportEmail) ? "not configured" : dashboard.Configuration.SupportEmail).</p>
+                    <p>Podpora: @(string.IsNullOrWhiteSpace(dashboard.Configuration.SupportEmail) ? "nenastavena" : dashboard.Configuration.SupportEmail).</p>
                 }
                 <AuthorizeView Roles="ElevatedOperator" Context="lockAuth">
                     <Authorized>
                         @if (confirmingLock)
                         {
-                            <p class="notice">Confirm that you want to @(dashboard.IsRsvpLocked ? "unlock" : "lock") all guest RSVP changes.</p>
-                            <button @onclick="ToggleLockAsync">Confirm</button> <button class="button-secondary" @onclick="(() => confirmingLock = false)">Cancel</button>
+                            <p class="notice">Potvrďte, že chcete @(dashboard.IsRsvpLocked ? "otevřít" : "uzavřít") všechny změny odpovědí hostů.</p>
+                            <button @onclick="ToggleLockAsync">Potvrdit</button> <button class="button-secondary" @onclick="(() => confirmingLock = false)">Zrušit</button>
                         }
                         else
                         {
-                            <button @onclick="(() => confirmingLock = true)">@(dashboard.IsRsvpLocked ? "Unlock RSVP" : "Lock RSVP")</button>
+                            <button @onclick="(() => confirmingLock = true)">@(dashboard.IsRsvpLocked ? "Otevřít potvrzování účasti" : "Uzavřít potvrzování účasti")</button>
                         }
                     </Authorized>
                 </AuthorizeView>
             </section>
 
             <section class="rsvp-card overview-card">
-                <h2>Workspaces</h2>
+                <h2>Pracovní oblasti</h2>
                 <div class="overview-links">
-                    <a href="/organizer/batches"><strong>Batch management</strong><span>Create, review, commit, and administer invitation waves.</span></a>
-                    <a href="/organizer/parties"><strong>Parties</strong><span>Search, filter, correct, and override invitation parties.</span></a>
-                    <a href="/organizer/settings"><strong>Event settings</strong><span>Review public event details and configuration.</span></a>
+                    <a href="/organizer/batches"><strong>Správa dávek</strong><span>Vytvářejte, kontrolujte, potvrzujte a spravujte vlny pozvánek.</span></a>
+                    <a href="/organizer/parties"><strong>Skupiny</strong><span>Vyhledávejte, filtrujte, opravujte a měňte stav skupin.</span></a>
+                    <a href="/organizer/settings"><strong>Nastavení akce</strong><span>Kontrolujte veřejné údaje o akci a konfiguraci.</span></a>
                 </div>
             </section>
         </div>
 
         <section class="rsvp-card recent-activity">
-            <div class="section-heading"><h2>Recent activity</h2><a href="/organizer/audit">View full audit history</a></div>
+            <div class="section-heading"><h2>Nedávná aktivita</h2><a href="/organizer/audit">Zobrazit celou historii změn</a></div>
             @if (dashboard.Audits.Count == 0)
             {
-                <p>No organizer activity has been recorded yet.</p>
+                <p>Zatím nebyla zaznamenána žádná aktivita pořadatele.</p>
             }
             else
             {
                 <ul>
                     @foreach (var audit in dashboard.Audits.Take(5))
                     {
-                        <li><strong>@audit.EventType</strong> <span>@audit.Outcome by @audit.Actor, @audit.OccurredAtUtc.ToString("u")</span></li>
+                        <li><strong>@audit.EventType</strong> <span>@audit.Outcome, @audit.Actor, @audit.OccurredAtUtc.ToString("g", CzechPresentationFormatter.Culture)</span></li>
                     }
                 </ul>
             }

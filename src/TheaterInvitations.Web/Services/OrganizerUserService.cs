@@ -15,8 +15,8 @@ public sealed class OrganizerUserService(UserManager<ApplicationUser> users, Rol
     public async Task CreateUserAsync(string email, string password, string role, CancellationToken cancellationToken = default)
     {
         await authorization.RequireAsync("ElevatedOperator", cancellationToken);
-        if (role is not ("Operator" or "ElevatedOperator")) throw new ArgumentException("Choose a valid organizer role.", nameof(role));
-        if (!await roles.RoleExistsAsync(role)) throw new InvalidOperationException("The organizer role is not configured.");
+        if (role is not ("Operator" or "ElevatedOperator")) throw new ArgumentException("Vyberte platnou roli pořadatele.", nameof(role));
+        if (!await roles.RoleExistsAsync(role)) throw new InvalidOperationException("Role pořadatele není nakonfigurována.");
         var user = new ApplicationUser { UserName = email.Trim(), Email = email.Trim(), EmailConfirmed = true };
         var result = await users.CreateAsync(user, password);
         if (!result.Succeeded) throw new ArgumentException(string.Join(" ", result.Errors.Select(x => x.Description)));
@@ -26,7 +26,7 @@ public sealed class OrganizerUserService(UserManager<ApplicationUser> users, Rol
     public async Task DisableUserAsync(string userId, CancellationToken cancellationToken = default)
     {
         await authorization.RequireAsync("ElevatedOperator", cancellationToken);
-        var user = await users.FindByIdAsync(userId) ?? throw new InvalidOperationException("Organizer account not found.");
+        var user = await users.FindByIdAsync(userId) ?? throw new InvalidOperationException("Účet pořadatele nebyl nalezen.");
         user.IsDisabled = true;
         user.DisabledAtUtc = DateTimeOffset.UtcNow;
         await users.UpdateAsync(user);
