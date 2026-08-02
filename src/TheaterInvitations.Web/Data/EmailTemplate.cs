@@ -4,7 +4,6 @@ public sealed class EmailTemplate
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public EmailTemplateType Type { get; set; }
-    public int VersionNumber { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? FromDisplayName { get; set; }
     public string Subject { get; set; } = string.Empty;

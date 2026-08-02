@@ -14,7 +14,7 @@ The ordered implementation for Czech localization, public RSVP, CSV data, batch 
 
 ## Czech-Only Product Experience
 
-The complete public and organizer UI will be Czech-only. Supplied/default email-template content will also be Czech, although organizers may still create multiple versioned templates.
+The complete public and organizer UI will be Czech-only. Supplied/default email-template content will also be Czech, although organizers may still create multiple immutable named templates.
 
 Presentation rules:
 
@@ -92,9 +92,9 @@ Phone is restricted personal data stored for a possible future communication nee
 
 ### Separate Concepts, Fewer Steps
 
-Batches and campaigns remain separate. A batch defines imported parties, deadline, tokens, and capacity. A campaign is an auditable pairing of a batch or explicit recipient scope with one template version and sender configuration.
+Batches and campaigns remain separate. A batch defines imported parties, deadline, tokens, and capacity. A campaign is an auditable pairing of a batch or explicit recipient scope with one named template and sender configuration.
 
-Multiple templates per type remain supported for experimentation and test sends. Saving a template makes that version immediately selectable; remove the draft-to-approved gate. Test send remains optional and does not mutate guest dispatch state.
+Multiple templates per type remain supported for experimentation and test sends. Saving a template makes it immediately selectable; remove the draft-to-approved gate. Test send remains optional and does not mutate guest dispatch state.
 
 ### Sending
 

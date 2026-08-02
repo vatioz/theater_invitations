@@ -20,7 +20,7 @@
             <div class="campaign-hero-copy">
                 <p class="eyebrow">@(CzechPresentationFormatter.CampaignType(campaign.Type))</p>
                 <h2>@campaign.BatchName</h2>
-                <p class="campaign-meta">Šablona: @campaign.TemplateName (v@(campaign.TemplateVersionNumber)) <span aria-hidden="true">·</span> @campaign.FromDisplayName &lt;@campaign.FromAddress&gt;</p>
+                <p class="campaign-meta">Šablona: @campaign.TemplateName <span aria-hidden="true">·</span> @campaign.FromDisplayName &lt;@campaign.FromAddress&gt;</p>
             </div>
             <span class="campaign-state">@CzechPresentationFormatter.CampaignState(campaign.State)</span>
         </section>
@@ -64,7 +64,7 @@
                                 <option value="">Vyberte šablonu</option>
                                 @foreach (var template in resendTemplates)
                                 {
-                                    <option value="@template.Id">@($"{template.Name} · {template.FromDisplayName} · v{template.VersionNumber}")</option>
+                                    <option value="@template.Id">@($"{template.Name} · {template.FromDisplayName}")</option>
                                 }
                             </InputSelect>
                             <button class="button-secondary" @onclick="PrepareResendAsync" disabled="@(selectedDispatchIds.Count == 0 || !Guid.TryParse(selectedResendTemplateId, out _))">Připravit opětovné odeslání (@selectedDispatchIds.Count)</button>

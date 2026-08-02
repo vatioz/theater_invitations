@@ -95,7 +95,6 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.ContentDigest).HasMaxLength(128).IsRequired();
             entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Version).IsRowVersion();
-            entity.HasIndex(x => new { x.Type, x.VersionNumber }).IsUnique();
         });
 
         modelBuilder.Entity<EmailCampaign>(entity =>

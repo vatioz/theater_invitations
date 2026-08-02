@@ -497,9 +497,9 @@ Phase 4 must be complete so campaign audiences are created only from the final c
 ### 5.1 Remove Template Approval
 
 - Replace template `Draft`/`Approved` behavior with `Active`/`Retired` behavior.
-- Saving a valid immutable template version makes it immediately active and selectable.
+- Saving a valid immutable named template makes it immediately active and selectable.
 - Keep test send optional and isolated from guest campaign dispatches.
-- Preserve content digests and verify the selected version has not changed when rendered or sent.
+- Preserve content digests and verify the selected template has not changed when rendered or sent.
 - Remove approval actions, approval-only filters, and approval wording.
 - Retain historical approval metadata during an expand deployment if needed; remove obsolete columns only after old application instances are gone.
 
@@ -514,7 +514,7 @@ A prepared campaign review must bind safely to the material inputs displayed or 
 - Batch and deadline.
 - Current active token reference and available delivery material.
 - Sender identity and verification state.
-- Template ID, version, and digest.
+- Template ID, name, and digest.
 - Event/support values rendered into the message.
 - Suppression state when implemented.
 
