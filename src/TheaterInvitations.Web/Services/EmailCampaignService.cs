@@ -11,14 +11,13 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     public async Task<EmailSenderSettings?> GetSenderSettingsAsync(CancellationToken cancellationToken = default)
     {
         var settings = await db.EmailSenderConfigurations.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
-        return settings is null ? null : new EmailSenderSettings(settings.FromDisplayName, settings.FromAddress, settings.ReplyToAddress, settings.DailySendCeiling, settings.IsDomainVerified, settings.Version);
+        return settings is null ? null : new EmailSenderSettings(settings.FromAddress, settings.ReplyToAddress, settings.DailySendCeiling, settings.IsDomainVerified, settings.Version);
     }
 
     public async Task SaveSenderSettingsAsync(EmailSenderSettingsInput input, uint? expectedVersion, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("ElevatedOperator", cancellationToken);
-        ArgumentException.ThrowIfNullOrWhiteSpace(input.FromDisplayName);
-        if (input.FromDisplayName.Trim().Length > 200 || input.DailySendCeiling <= 0) throw new ArgumentException("Zadejte jméno odesílatele dlouhé nejvýše 200 znaků a kladný denní limit odesílání.");
+        if (input.DailySendCeiling <= 0) throw new ArgumentException("Zadejte kladný denní limit odesílání.");
         var from = PartyEmailValidation.Normalize(input.FromAddress);
         var replyTo = PartyEmailValidation.Normalize(input.ReplyToAddress);
         var settings = await db.EmailSenderConfigurations.SingleOrDefaultAsync(cancellationToken);
@@ -32,7 +31,6 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
             throw new StaleDataException("Nastavení odesílatele e-mailů se po otevření změnilo. Byly načteny aktuální hodnoty.");
         }
 
-        settings.FromDisplayName = input.FromDisplayName.Trim();
         settings.FromAddress = from;
         settings.ReplyToAddress = replyTo;
         settings.DailySendCeiling = input.DailySendCeiling;
@@ -45,14 +43,14 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
 
     public async Task<IReadOnlyList<EmailTemplateSummary>> GetTemplatesAsync(CancellationToken cancellationToken = default) =>
         await db.EmailTemplates.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc)
-            .Select(x => new EmailTemplateSummary(x.Id, x.Type, x.VersionNumber, x.Name, x.Subject, x.State, x.Version)).ToListAsync(cancellationToken);
+            .Select(x => new EmailTemplateSummary(x.Id, x.Type, x.VersionNumber, x.Name, x.FromDisplayName, x.Subject, x.State, x.Version)).ToListAsync(cancellationToken);
 
     public async Task CreateTemplateAsync(EmailTemplateInput input, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
         ValidateTemplate(input);
         var nextVersion = (await db.EmailTemplates.Where(x => x.Type == input.Type).Select(x => (int?)x.VersionNumber).MaxAsync(cancellationToken) ?? 0) + 1;
-        var template = new EmailTemplate { Type = input.Type, VersionNumber = nextVersion, Name = input.Name.Trim(), Subject = input.Subject.Trim(), HtmlBody = input.HtmlBody, PlainTextBody = input.PlainTextBody, State = EmailTemplateState.Active, ContentDigest = Digest(input), CreatedAtUtc = clock.UtcNow, CreatedBy = actor };
+        var template = new EmailTemplate { Type = input.Type, VersionNumber = nextVersion, Name = input.Name.Trim(), FromDisplayName = input.FromDisplayName.Trim(), Subject = input.Subject.Trim(), HtmlBody = input.HtmlBody, PlainTextBody = input.PlainTextBody, State = EmailTemplateState.Active, ContentDigest = Digest(input), CreatedAtUtc = clock.UtcNow, CreatedBy = actor };
         db.EmailTemplates.Add(template);
         AddAudit(db, "EmailTemplateCreated", "Accepted", actor, null, null, null);
         await db.SaveChangesAsync(cancellationToken);
@@ -80,13 +78,14 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
             var batch = await operationDb.InvitationBatches.SingleAsync(x => x.Id == batchId, token);
             if (batch.State != InvitationBatchState.Committed || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Vyberte potvrzenou dávku s termínem v budoucnosti.");
             var template = await operationDb.EmailTemplates.SingleAsync(x => x.Id == templateId, token);
+            if (string.IsNullOrWhiteSpace(template.FromDisplayName)) throw new InvalidOperationException("Vybraná šablona nemá platné zobrazované jméno odesílatele.");
             if (template.Type != EmailTemplateType.InitialInvitation || template.State != EmailTemplateState.Active) throw new InvalidOperationException("Vyberte aktivní šablonu první pozvánky.");
             var recipients = await (from party in operationDb.InvitationParties
                                     join rsvpToken in operationDb.RsvpTokens on party.Id equals rsvpToken.PartyId
                                      where party.BatchId == batchId && party.Status == InvitationStatus.Pending && rsvpToken.RevokedAtUtc == null && rsvpToken.RawToken != null
                                     select new { party, rsvpToken }).ToListAsync(token);
             if (recipients.Count == 0) throw new InvalidOperationException("Vybraná dávka nemá žádné příjemce způsobilé pro pozvánku.");
-            var campaign = new EmailCampaign { Type = EmailCampaignType.InitialInvitation, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
+            var campaign = new EmailCampaign { Type = EmailCampaignType.InitialInvitation, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = template.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
             operationDb.EmailCampaigns.Add(campaign);
             foreach (var recipient in recipients)
             {
@@ -140,6 +139,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
             if (!sender.IsDomainVerified) throw new InvalidOperationException("Před přípravou kampaně ověřte doménu odesílatele.");
             var effectiveTemplateId = templateId ?? source.TemplateId;
             var template = await operationDb.EmailTemplates.SingleAsync(x => x.Id == effectiveTemplateId, token);
+            if (string.IsNullOrWhiteSpace(template.FromDisplayName)) throw new InvalidOperationException("Vybraná šablona nemá platné zobrazované jméno odesílatele.");
             if (template.State != EmailTemplateState.Active) throw new InvalidOperationException("Vyberte aktivní šablonu pro opětovné odeslání.");
             var eventConfiguration = await operationDb.EventConfigurations.SingleAsync(token);
 
@@ -186,7 +186,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
                 recipients.Add(new ReviewRecipient(party.Id, party.PrimaryGuestName, email!, party.AllocatedSeats, party.Status, tokenEntity.Id, true));
             }
 
-            var campaign = new EmailCampaign { Type = EmailCampaignType.Resend, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, SourceCampaignId = sourceCampaignId, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
+            var campaign = new EmailCampaign { Type = EmailCampaignType.Resend, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, SourceCampaignId = sourceCampaignId, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = template.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
             operationDb.EmailCampaigns.Add(campaign);
             foreach (var recipient in recipients)
             {
@@ -215,8 +215,9 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         var template = await db.EmailTemplates.SingleAsync(x => x.Id == templateId && x.State == EmailTemplateState.Active, cancellationToken);
         var eventConfiguration = await db.EventConfigurations.SingleAsync(cancellationToken);
         var zone = TimeZoneInfo.FindSystemTimeZoneById(eventConfiguration.TimeZoneId);
+        if (string.IsNullOrWhiteSpace(template.FromDisplayName)) throw new InvalidOperationException("Vybraná šablona nemá platné zobrazované jméno odesílatele.");
         var rendered = renderer.Render(template.Subject, template.HtmlBody, template.PlainTextBody, new EmailRenderData("Test Guest", "2 seats for you and your guest", eventConfiguration.EventName, TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("D"), TimeZoneInfo.ConvertTime(eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("t"), eventConfiguration.VenueName, eventConfiguration.VenueAddress, "Test deadline", $"{baseUrl.TrimEnd('/')}/rsvp/test-link", eventConfiguration.SupportEmail));
-        var result = await emailProvider.SendAsync(new EmailProviderMessage($"{sender.FromDisplayName} <{sender.FromAddress}>", sender.ReplyToAddress, recipient, rendered.Subject, rendered.HtmlBody, rendered.PlainTextBody, $"test/{templateId:N}/{Guid.NewGuid():N}"), cancellationToken);
+        var result = await emailProvider.SendAsync(new EmailProviderMessage(FormatFrom(template.FromDisplayName, sender.FromAddress), sender.ReplyToAddress, recipient, rendered.Subject, rendered.HtmlBody, rendered.PlainTextBody, $"test/{templateId:N}/{Guid.NewGuid():N}"), cancellationToken);
         if (!result.IsAccepted) throw new InvalidOperationException("Zkušební e-mail nebyl poskytovatelem přijat.");
     }
 
@@ -232,6 +233,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
             if (batch.State != InvitationBatchState.Committed || batch.DeadlineUtc <= clock.UtcNow) throw new InvalidOperationException("Vyberte potvrzenou dávku s termínem v budoucnosti.");
             var template = await operationDb.EmailTemplates.SingleAsync(x => x.Id == templateId, token);
             var requiredTemplateType = type == EmailCampaignType.Reminder ? EmailTemplateType.Reminder : EmailTemplateType.InitialInvitation;
+            if (string.IsNullOrWhiteSpace(template.FromDisplayName)) throw new InvalidOperationException("Vybraná šablona nemá platné zobrazované jméno odesílatele.");
             if (template.Type != requiredTemplateType || template.State != EmailTemplateState.Active) throw new InvalidOperationException("Vyberte aktivní šablonu pro tento typ kampaně.");
             var recipients = await (from party in operationDb.InvitationParties
                                     join rsvpToken in operationDb.RsvpTokens on party.Id equals rsvpToken.PartyId
@@ -247,7 +249,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
                 recipients = recipients.Where(x => !remindedParties.Contains(x.party.Id)).ToList();
             }
             if (recipients.Count == 0) throw new InvalidOperationException("Vybraný okruh nemá žádné způsobilé příjemce s aktivním tokenem RSVP. Před přípravou e-mailu potvrďte novou dávku nebo obnovte odkaz skupiny pro RSVP.");
-            var campaign = new EmailCampaign { Type = type, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = sender.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
+            var campaign = new EmailCampaign { Type = type, State = EmailCampaignState.ReadyForReview, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = template.VersionNumber, TemplateDigest = template.ContentDigest, FromDisplayName = template.FromDisplayName, FromAddress = sender.FromAddress, ReplyToAddress = sender.ReplyToAddress, CreatedAtUtc = clock.UtcNow, CreatedBy = actor, QueuedAtUtc = default };
             operationDb.EmailCampaigns.Add(campaign);
             foreach (var recipient in recipients) operationDb.EmailDispatches.Add(new EmailDispatch { CampaignId = campaign.Id, PartyId = recipient.party.Id, TokenId = recipient.rsvpToken.Id, RecipientEmail = recipient.party.Email, RecipientName = recipient.party.PrimaryGuestName, AllocatedSeats = recipient.party.AllocatedSeats, DeadlineUtc = batch.DeadlineUtc, IdempotencyKey = $"{type.ToString().ToLowerInvariant()}/{campaign.Id:N}/{recipient.party.Id:N}", State = EmailDispatchState.Queued });
             var eventConfiguration = await operationDb.EventConfigurations.SingleAsync(token);
@@ -323,10 +325,13 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     private static void ValidateTemplate(EmailTemplateInput input)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(input.FromDisplayName);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Subject);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.HtmlBody);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.PlainTextBody);
         if (input.Name.Trim().Length > 200) throw new ArgumentException("Název šablony smí mít nejvýše 200 znaků.");
+        var displayName = input.FromDisplayName.Trim();
+        if (displayName.Length > 200 || displayName.Any(char.IsControl) || displayName.Contains("{{", StringComparison.Ordinal) || displayName.Contains("}}", StringComparison.Ordinal)) throw new ArgumentException("Zobrazované jméno odesílatele smí mít nejvýše 200 znaků a nesmí obsahovat řídicí znaky ani zástupné symboly.");
         if (input.Subject.Length > 300) throw new ArgumentException("Předmět e-mailu smí mít nejvýše 300 znaků.");
         EmailTemplateRenderer.Validate(input.Subject, input.HtmlBody, input.PlainTextBody);
     }
@@ -346,6 +351,11 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
                 await CompleteClaimAsync(claim, new EmailProviderResult(false, false, null, "token-unavailable"), true, cancellationToken);
                 continue;
             }
+            if (string.IsNullOrWhiteSpace(template.FromDisplayName))
+            {
+                await CompleteClaimAsync(claim, new EmailProviderResult(false, false, null, "sender-display-name-unavailable"), true, cancellationToken);
+                continue;
+            }
 
             var zone = TimeZoneInfo.FindSystemTimeZoneById(eventConfiguration.TimeZoneId);
             var rsvpUrl = $"{baseUrl.TrimEnd('/')}/rsvp/{token.RawToken}";
@@ -355,7 +365,7 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
                     TimeZoneInfo.ConvertTime(eventConfiguration.DoorsAtUtc, zone).ToString("t"), TimeZoneInfo.ConvertTime(eventConfiguration.StartsAtUtc, zone).ToString("t"),
                     eventConfiguration.VenueName, eventConfiguration.VenueAddress,
                     TimeZoneInfo.ConvertTime(claim.DeadlineUtc, zone).ToString("f") + $" ({eventConfiguration.TimeZoneId})", rsvpUrl, eventConfiguration.SupportEmail));
-            var result = await emailProvider.SendAsync(new EmailProviderMessage($"{claim.FromDisplayName} <{claim.FromAddress}>", claim.ReplyToAddress,
+            var result = await emailProvider.SendAsync(new EmailProviderMessage(FormatFrom(claim.FromDisplayName, claim.FromAddress), claim.ReplyToAddress,
                 claim.RecipientEmail, rendered.Subject, rendered.HtmlBody, rendered.PlainTextBody, claim.IdempotencyKey), cancellationToken);
             await CompleteClaimAsync(claim, result, false, cancellationToken);
         }
@@ -506,8 +516,10 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         Append(material, template.Name);
         Append(material, template.State);
         Append(material, template.ContentDigest);
-        Append(material, Digest(new EmailTemplateInput(template.Type, template.Name, template.Subject, template.HtmlBody, template.PlainTextBody)));
-        Append(material, sender.FromDisplayName);
+        Append(material, campaign.FromDisplayName);
+        Append(material, campaign.FromAddress);
+        Append(material, campaign.ReplyToAddress);
+        Append(material, Digest(new EmailTemplateInput(template.Type, template.Name, template.FromDisplayName ?? string.Empty, template.Subject, template.HtmlBody, template.PlainTextBody)));
         Append(material, sender.FromAddress);
         Append(material, sender.ReplyToAddress);
         Append(material, sender.IsDomainVerified);
@@ -545,7 +557,8 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
 
     private sealed record ReviewRecipient(Guid PartyId, string Name, string Email, int AllocatedSeats, InvitationStatus Status, Guid TokenId, bool HasAvailableDeliveryMaterial);
 
-    private static string Digest(EmailTemplateInput input) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{input.Type}\n{input.Subject}\n{input.HtmlBody}\n{input.PlainTextBody}")));
+    private static string Digest(EmailTemplateInput input) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{input.Type}\n{input.FromDisplayName}\n{input.Subject}\n{input.HtmlBody}\n{input.PlainTextBody}")));
+    private static string FormatFrom(string displayName, string address) => $"\"{displayName.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\" <{address}>";
     private static string? NormalizeEmailOrNull(string email)
     {
         try { return PartyEmailValidation.Normalize(email); }
@@ -554,10 +567,10 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
     private void AddAudit(InvitationDbContext context, string type, string outcome, string actor, Guid? batchId, Guid? campaignId, Guid? dispatchId) => context.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, EmailCampaignId = campaignId, EmailDispatchId = dispatchId, CorrelationId = Guid.NewGuid().ToString("N") });
 }
 
-public sealed record EmailSenderSettings(string FromDisplayName, string FromAddress, string ReplyToAddress, int DailySendCeiling, bool IsDomainVerified, uint Version);
-public sealed record EmailSenderSettingsInput(string FromDisplayName, string FromAddress, string ReplyToAddress, int DailySendCeiling, bool IsDomainVerified);
-public sealed record EmailTemplateInput(EmailTemplateType Type, string Name, string Subject, string HtmlBody, string PlainTextBody);
-public sealed record EmailTemplateSummary(Guid Id, EmailTemplateType Type, int VersionNumber, string Name, string Subject, EmailTemplateState State, uint Version);
+public sealed record EmailSenderSettings(string FromAddress, string ReplyToAddress, int DailySendCeiling, bool IsDomainVerified, uint Version);
+public sealed record EmailSenderSettingsInput(string FromAddress, string ReplyToAddress, int DailySendCeiling, bool IsDomainVerified);
+public sealed record EmailTemplateInput(EmailTemplateType Type, string Name, string FromDisplayName, string Subject, string HtmlBody, string PlainTextBody);
+public sealed record EmailTemplateSummary(Guid Id, EmailTemplateType Type, int VersionNumber, string Name, string? FromDisplayName, string Subject, EmailTemplateState State, uint Version);
 public sealed record EmailCampaignSummary(Guid Id, EmailCampaignType Type, EmailCampaignState State, string BatchName, string TemplateName, int TemplateVersionNumber, DateTimeOffset CreatedAtUtc, int RecipientCount, int AcceptedCount, int FailedCount, uint Version);
 public sealed record EmailDispatchSummary(Guid Id, string RecipientName, string RecipientEmail, int AllocatedSeats, EmailDispatchState State, int AttemptCount, string? FailureCategory, string? ProviderMessageId);
 public sealed record EmailCampaignSkipSummary(Guid? PartyId, string ReasonCategory);
