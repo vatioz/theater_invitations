@@ -16,4 +16,6 @@ public sealed class EmailDispatch
     public DateTimeOffset? AcceptedAtUtc { get; set; }
     public string? ProviderMessageId { get; set; }
     public string? FailureCategory { get; set; }
+    public Guid? ClaimId { get; set; }
+    public DateTimeOffset? ClaimedAtUtc { get; set; }
 }

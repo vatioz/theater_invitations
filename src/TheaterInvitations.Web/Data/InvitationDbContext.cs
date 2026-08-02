@@ -14,6 +14,7 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
     public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
     public DbSet<EmailCampaign> EmailCampaigns => Set<EmailCampaign>();
     public DbSet<EmailDispatch> EmailDispatches => Set<EmailDispatch>();
+    public DbSet<EmailDailyAllowance> EmailDailyAllowances => Set<EmailDailyAllowance>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -87,6 +88,7 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
 
         modelBuilder.Entity<EmailTemplate>(entity =>
         {
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
             entity.Property(x => x.ContentDigest).HasMaxLength(128).IsRequired();
             entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
@@ -115,11 +117,20 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.IdempotencyKey).HasMaxLength(256).IsRequired();
             entity.Property(x => x.ProviderMessageId).HasMaxLength(200);
             entity.Property(x => x.FailureCategory).HasMaxLength(100);
+            entity.Property(x => x.ClaimId);
+            entity.HasIndex(x => x.ClaimId).IsUnique();
             entity.HasIndex(x => new { x.CampaignId, x.PartyId }).IsUnique();
             entity.HasIndex(x => x.IdempotencyKey).IsUnique();
             entity.HasOne<EmailCampaign>().WithMany().HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<RsvpToken>().WithMany().HasForeignKey(x => x.TokenId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<EmailDailyAllowance>(entity =>
+        {
+            entity.Property(x => x.DayUtc).HasColumnType("date");
+            entity.Property(x => x.Version).IsRowVersion();
+            entity.HasIndex(x => x.DayUtc).IsUnique();
         });
     }
 }

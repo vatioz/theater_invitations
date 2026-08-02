@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TheaterInvitations.Web.Data;
@@ -11,9 +12,11 @@ using TheaterInvitations.Web.Data;
 namespace TheaterInvitations.Web.Migrations
 {
     [DbContext(typeof(InvitationDbContext))]
-    partial class InvitationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260802114058_Phase5SendingAndDailyLimit")]
+    partial class Phase5SendingAndDailyLimit
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -613,11 +616,6 @@ namespace TheaterInvitations.Web.Migrations
                     b.Property<string>("HtmlBody")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("PlainTextBody")
                         .IsRequired()

@@ -6,23 +6,60 @@
 @inject EmailCampaignService EmailCampaignService
 
     <PageTitle>Kontrola kampaně</PageTitle>
-<main class="organizer-page">
+<main class="organizer-page campaign-detail">
     <header><p class="eyebrow">Pořadatel</p><h1>Kontrola kampaně</h1><OrganizerNavigation /></header>
     @if (campaign is null) { <p>Načítání kampaně...</p> }
     else
     {
         @if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }
-        <section class="rsvp-card"><div class="section-heading"><div><h2>@CzechPresentationFormatter.CampaignType(campaign.Type) pro dávku @campaign.BatchName</h2><p>Šablona v@(campaign.TemplateVersionNumber). Odesílatel: @campaign.FromDisplayName &lt;@campaign.FromAddress&gt;.</p></div><span class="draft-state">@CzechPresentationFormatter.CampaignState(campaign.State)</span></div><dl class="configuration-summary"><div><dt>Adresa pro odpověď</dt><dd>@campaign.ReplyToAddress</dd></div><div><dt>Příjemci</dt><dd>@campaign.Dispatches.Count příjemců ve frontě</dd></div></dl>
-            <AuthorizeView Roles="Operator,ElevatedOperator" Context="confirmAuth"><Authorized>@if (campaign.State == EmailCampaignState.ReadyForReview) { @if (confirming) { <p class="notice">Zařadit zkontrolovanou kampaň do fronty? E-mail se neodešle, dokud nepoužijete tlačítko Odeslat kampaň.</p><button @onclick="ConfirmAsync">Potvrdit a zařadit kampaň do fronty</button> <button class="button-secondary" @onclick="(() => confirming = false)">Zrušit</button> } else { <button @onclick="(() => confirming = true)">Potvrdit a zařadit kampaň do fronty</button> } } else if (campaign.State is EmailCampaignState.Queued or EmailCampaignState.PartiallyFailed or EmailCampaignState.Failed) { @if (confirmingSend) { <p class="notice">Odeslat všem příjemcům ve frontě nebo s chybou? Příjemcům, pro které byl e-mail přijat, se e-mail znovu neodešle.</p><button @onclick="SendAsync">Odeslat kampaň</button> <button class="button-secondary" @onclick="(() => confirmingSend = false)">Zrušit</button> } else { <button @onclick="(() => confirmingSend = true)">@(campaign.State == EmailCampaignState.Queued ? "Odeslat kampaň" : "Zkusit znovu neúspěšné příjemce")</button> } }</Authorized></AuthorizeView>
-        </section>
-        <section class="rsvp-card"><h2>Náhled vykreslení</h2><p class="form-help">Náhled používá reprezentativní údaje a skrytý odkaz pro RSVP. E-mail neodesílá.</p><h3>@campaign.Preview.Subject</h3><div class="email-html-preview">@((MarkupString)campaign.Preview.HtmlBody)</div><h3>Prostý text</h3><pre class="email-text-preview">@campaign.Preview.PlainTextBody</pre></section>
-        <section class="rsvp-card"><h2>Přehled příjemců</h2><div class="party-grid-wrap"><table><thead><tr><th>Jméno</th><th>E-mail</th><th>Místa</th><th>Stav</th><th>Pokusy</th><th>ID zprávy poskytovatele</th><th>Chyba</th></tr></thead><tbody>@foreach (var dispatch in campaign.Dispatches) { <tr><td>@dispatch.RecipientName</td><td>@dispatch.RecipientEmail</td><td>@CzechPresentationFormatter.Seats(dispatch.AllocatedSeats)</td><td>@CzechPresentationFormatter.DispatchState(dispatch.State)</td><td>@dispatch.AttemptCount</td><td>@(dispatch.ProviderMessageId ?? "-")</td><td>@(dispatch.FailureCategory ?? "-")</td></tr> }</tbody></table></div></section>
+         <section class="campaign-hero">
+             <div class="campaign-hero-copy">
+                 <p class="eyebrow">@(CzechPresentationFormatter.CampaignType(campaign.Type))</p>
+                 <h2>@campaign.BatchName</h2>
+                 <p class="campaign-meta">Šablona: @campaign.TemplateName (v@(campaign.TemplateVersionNumber)) <span aria-hidden="true">·</span> @campaign.FromDisplayName &lt;@campaign.FromAddress&gt;</p>
+             </div>
+             <span class="campaign-state">@CzechPresentationFormatter.CampaignState(campaign.State)</span>
+         </section>
+         <section class="campaign-metrics" aria-label="Souhrn kampaně">
+             <div><span>Celkem</span><strong>@campaign.Dispatches.Count</strong><small>příjemců</small></div>
+             <div><span>Přijato</span><strong>@campaign.Dispatches.Count(x => x.State is EmailDispatchState.Accepted or EmailDispatchState.Delivered)</strong><small>poskytovatelem</small></div>
+             <div><span>Neúspěšné</span><strong>@campaign.Dispatches.Count(x => x.State is EmailDispatchState.Failed or EmailDispatchState.Bounced or EmailDispatchState.Complained or EmailDispatchState.Suppressed)</strong><small>příjemců</small></div>
+             <div><span>Zbývá</span><strong>@campaign.Dispatches.Count(x => x.State is EmailDispatchState.Queued or EmailDispatchState.Prepared or EmailDispatchState.Sending)</strong><small>ke zpracování</small></div>
+         </section>
+         <section class="campaign-actions">
+             <div><p class="eyebrow">Další krok</p><h2>@(campaign.State == EmailCampaignState.PausedDailyLimit ? "Kampaň čeká na obnovení limitu" : "Kampaň je připravena")</h2><p>@(campaign.State == EmailCampaignState.ReadyForReview ? "Zkontrolujte náhled a seznam příjemců. Odeslání začne okamžitě a při dosažení denního limitu se automaticky pozastaví." : campaign.State == EmailCampaignState.PausedDailyLimit ? $"Pokračovat lze {campaign.ContinueAfterUtc?.ToLocalTime().ToString("g") ?? "po obnovení limitu"}. Přijaté zprávy se znovu neodešlou." : "Tato kampaň již nečeká na ruční odeslání.")</p></div>
+             <AuthorizeView Roles="Operator,ElevatedOperator" Context="confirmAuth">
+                 <Authorized>
+                     @if (campaign.State == EmailCampaignState.ReadyForReview)
+                     {
+                         @if (confirming)
+                         {
+                             <div class="campaign-confirm">
+                                 <p>Odeslat kampaň všem způsobilým příjemcům?</p>
+                                 <button @onclick="SendNowAsync">Ano, odeslat nyní</button>
+                                 <button class="button-secondary" @onclick="(() => confirming = false)">Zrušit</button>
+                             </div>
+                         }
+                         else
+                         {
+                             <button @onclick="(() => confirming = true)">Odeslat nyní</button>
+                         }
+                     }
+                     else if (campaign.State == EmailCampaignState.PausedDailyLimit && campaign.ContinueAfterUtc is not null && DateTimeOffset.UtcNow >= campaign.ContinueAfterUtc)
+                     {
+                         <button @onclick="ContinueAsync">Pokračovat</button>
+                     }
+                 </Authorized>
+             </AuthorizeView>
+         </section>
+         <section class="campaign-section"><div class="campaign-section-heading"><div><p class="eyebrow">Náhled</p><h2>Jak e-mail vypadá</h2></div><span class="section-note">Reprezentativní příjemce</span></div><div class="campaign-preview-grid"><div class="campaign-email-preview"><div class="campaign-email-toolbar"><span></span><span></span><span></span></div><h3>@campaign.Preview.Subject</h3><div class="email-html-preview">@((MarkupString)campaign.Preview.HtmlBody)</div></div><div><h3 class="preview-label">Prostý text</h3><pre class="email-text-preview">@campaign.Preview.PlainTextBody</pre></div></div></section>
+         <section class="campaign-section"><div class="campaign-section-heading"><div><p class="eyebrow">Příjemci</p><h2>Přehled odesílání</h2></div><span class="section-note">@campaign.Dispatches.Count příjemců</span></div><div class="party-grid-wrap"><table><thead><tr><th>Jméno</th><th>E-mail</th><th>Místa</th><th>Stav</th><th>Pokusy</th><th>ID zprávy poskytovatele</th><th>Chyba</th></tr></thead><tbody>@foreach (var dispatch in campaign.Dispatches) { <tr><td>@dispatch.RecipientName</td><td>@dispatch.RecipientEmail</td><td>@CzechPresentationFormatter.Seats(dispatch.AllocatedSeats)</td><td><span class="dispatch-pill dispatch-@dispatch.State.ToString().ToLowerInvariant()">@CzechPresentationFormatter.DispatchState(dispatch.State)</span></td><td>@dispatch.AttemptCount</td><td>@(dispatch.ProviderMessageId ?? "-")</td><td>@(dispatch.FailureCategory ?? "-")</td></tr> }</tbody></table></div></section>
     }
 </main>
 @code {
     [Parameter] public Guid CampaignId { get; set; }
-    private EmailCampaignDetail? campaign; private string? error; private bool confirming; private bool confirmingSend;
+    private EmailCampaignDetail? campaign; private string? error; private bool confirming;
     protected override async Task OnParametersSetAsync() => campaign = await EmailCampaignService.GetCampaignAsync(CampaignId);
-    private async Task ConfirmAsync() { if (campaign is null) return; try { await EmailCampaignService.ConfirmCampaignAsync(campaign.Id, campaign.Version); confirming = false; error = null; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; confirming = false; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } }
-    private async Task SendAsync() { if (campaign is null) return; try { await EmailCampaignService.SendCampaignAsync(campaign.Id, campaign.Version); confirmingSend = false; error = null; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; confirmingSend = false; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } }
+    private async Task SendNowAsync() { if (campaign is null) return; try { await EmailCampaignService.SendCampaignAsync(campaign.Id, campaign.Version); confirming = false; error = null; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; confirming = false; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } }
+    private async Task ContinueAsync() { if (campaign is null) return; try { await EmailCampaignService.ContinueCampaignAsync(campaign.Id, campaign.Version); error = null; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; campaign = await EmailCampaignService.GetCampaignAsync(CampaignId); } }
 }

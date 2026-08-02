@@ -53,6 +53,7 @@ public static class CzechPresentationFormatter
         EmailCampaignState.PartiallyFailed => "Částečně neúspěšné",
         EmailCampaignState.Failed => "Neúspěšné",
         EmailCampaignState.Invalidated => "Kontrola je neplatná",
+        EmailCampaignState.PausedDailyLimit => "Pozastaveno kvůli dennímu limitu",
         _ => value.ToString()
     };
 
