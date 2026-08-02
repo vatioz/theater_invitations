@@ -18,7 +18,7 @@ The keywords **must**, **must not**, **should**, and **may** are normative.
 - **FR-012** An eligible `Pending` invitation may become `Confirmed` or `Declined` through a guest response or authorized override.
 - **FR-013** An unanswered `Pending` invitation becomes `Expired` after its deadline.
 - **FR-014** Expiration must be effective according to the authoritative clock even if no background job has yet persisted the `Expired` state.
-- **FR-015** Response changes before the deadline must follow OD-02. Until resolved, no implementation may assume they are allowed.
+- **FR-015** A guest may change a `Confirmed` or `Declined` response until the invitation deadline. At or after the deadline, guest mutations must be rejected even when a response was previously recorded.
 - **FR-016** Late or VIP exceptions must occur only through the approved override policy and must remain subject to capacity enforcement.
 - **FR-017** Repeating a response that already produced the requested state must be idempotent.
 - **FR-018** A stale request that conflicts with a newer state must be rejected and show the current state.
@@ -26,7 +26,7 @@ The keywords **must**, **must not**, **should**, and **may** are normative.
 ## Deadlines and Locking
 
 - **FR-020** Each invitation must have an absolute deadline stored as UTC.
-- **FR-021** Organizers must enter and view deadlines in the configured event time zone, including an explicit time and time-zone label.
+- **FR-021** Organizers must enter and view deadlines in the configured event time zone, including an explicit time-zone label. Public pages must use the configured event time zone but may omit its label.
 - **FR-022** Deadline eligibility must be checked inside the same server-side operation that applies an RSVP mutation.
 - **FR-023** The global lock must override individual deadlines and reject guest mutations.
 - **FR-024** The global lock must not silently alter existing invitation statuses.
@@ -66,11 +66,14 @@ remaining capacity = 50
 - **FR-050** Expired and locked views must explain that self-service is unavailable and provide the approved organizer contact.
 - **FR-051** The form must protect against CSRF and duplicate submission.
 - **FR-052** The public experience must be usable on current mobile and desktop browsers and meet the selected accessibility standard.
+- **FR-053** The entire public and organizer UI must be Czech-only, use formal neutral wording, Czech locale formatting, and a 24-hour clock. Default email-template content must also be Czech.
+- **FR-054** The active RSVP page must use a focused invitation-card layout emphasizing event title, date, venue, guest name, and allocation in that order, using neutral wording that does not attempt Czech vocative inflection.
+- **FR-055** Confirm and Decline must be separate direct actions. Accessibility requirements must remain visible and optional; confirming submits their value, while declining requires an inline confirmation and clears any stored value.
 
 ## Invitation Batches
 
 - **FR-060** A batch must have a stable identifier, display name or number, deadline, and lifecycle metadata.
-- **FR-061** CSV import must create a new draft batch rather than immediately send email.
+- **FR-061** CSV import must produce a temporary in-memory preview and must not persist a draft batch or draft rows.
 - **FR-062** A batch preview must show valid rows, invalid rows, duplicate concerns, party count, allocated-seat total, and capacity impact.
 - **FR-063** Committing a batch must be transactional.
 - **FR-064** A later batch may be committed only when its allocations fit within remaining capacity.
@@ -83,7 +86,7 @@ remaining capacity = 50
 - **FR-070** All organizer pages and actions must require an authenticated and authorized identity.
 - **FR-071** CSV import must accept the canonical fields defined in the integration specification.
 - **FR-072** The parser must support standards-compliant quoting, embedded delimiters, Unicode, and configured file-size limits.
-- **FR-073** No live invitation party may be persisted until the organizer confirms a valid preview. Protected draft import data may be persisted for review under the approved retention policy.
+- **FR-073** No batch, party, token, or import row may be persisted until the organizer confirms a fully valid preview. Confirmation must transactionally reparse or revalidate the server-held upload, recheck duplicates and capacity, and commit the complete batch or nothing.
 - **FR-074** The party list must support search, status and batch filters, sorting, and pagination.
 - **FR-075** Search must cover at least invitee name, email, and company.
 - **FR-076** The dashboard must show party counts and allocated-seat totals by effective status.
@@ -92,6 +95,10 @@ remaining capacity = 50
 - **FR-079** The UI must require confirmation for global lock changes, send operations, destructive corrections, and final export.
 - **FR-080** The organizer must be able to inspect audit history without exposing secret tokens.
 - **FR-081** The organizer must be warned when displayed data became stale before a consequential action is committed.
+- **FR-082** Import columns must be matched by header name independent of order. Required headers are `primary_guest_name`, `email`, and `allocated_seats`; recognized optional headers are `company`, `priority`, and `phone`.
+- **FR-083** `priority` must accept only 1, 2, or 3 and default to 3 when absent or blank. `phone` must be optional, trimmed, length-bounded, free of control characters, and otherwise preserved without guessed normalization.
+- **FR-084** Unknown CSV columns must be ignored, but preview must prominently list every ignored header before confirmation. Missing or misspelled required headers remain errors.
+- **FR-085** Authorized organizers may correct priority and phone with concurrency protection and audit. Phone has no current automated communication behavior and must remain restricted personal data.
 
 ## Email Operations
 
@@ -105,16 +112,35 @@ remaining capacity = 50
 - **FR-097** A provider API acceptance must not be described as confirmed delivery.
 - **FR-098** Bounce, complaint, retry, and suppression behavior must follow the approved email policy.
 - **FR-099** The system must not claim or imply guaranteed inbox delivery.
+- **FR-100** A saved template version must be immediately selectable without a separate approval state. Preview and test send remain available but are not activation gates.
+- **FR-101** Campaign preparation must pair one eligible audience or batch with one saved template and produce a reviewable campaign. Any later change to source party data, deadline, token, sender, template, or eligibility must invalidate that review.
+- **FR-102** One confirmed `Send now` action from campaign review must begin server-side sending; the workflow must not require a separate confirm-to-queue action followed by another confirmed send action.
+- **FR-103** Reaching the configured daily ceiling must pause the campaign with sent and remaining counts and the earliest continuation date. An authorized organizer may continue after reset without another confirmation.
+- **FR-104** Campaign detail must allow an organizer to select prior recipients for an auditable resend using their current active links, subject to current eligibility and suppression checks.
 
 ## Export and Handoff
 
-- **FR-100** The canonical manifest must contain confirmed parties only.
-- **FR-101** The canonical fields must include party name, company when present, email, allocated seats, and accessibility requirements when present.
-- **FR-102** A theater adapter must map canonical fields to the agreed CSV headers, ordering, encoding, and representation.
-- **FR-103** Export must use standards-compliant CSV escaping.
-- **FR-104** Before download, the organizer must see row count, total allocated seats, accessibility-request count, and mapping version.
-- **FR-105** Each export run must be auditable and reproducible from its recorded criteria and mapping version.
-- **FR-106** Corrections after handoff must follow the agreed theater reconciliation procedure.
+- **FR-130** The canonical manifest must contain confirmed parties only.
+- **FR-131** The canonical fields must include party name, company when present, email, optional phone, allocated seats, accessibility requirements when present, and current seat assignments when present. Priority remains available to mapping only if the theater contract requires it.
+- **FR-132** A versioned theater adapter must map canonical fields to the theater-approved headers, ordering, encoding, delimiter, row model, and representation. No production theater export may be implemented from a guessed contract.
+- **FR-133** Export must use standards-compliant escaping appropriate to the approved format.
+- **FR-134** Before download, the organizer must see output row count, confirmed-party count, total allocated seats, accessibility-request count, unassigned-party count, and mapping version.
+- **FR-135** Export may occur at any time as a timestamped current snapshot. Unassigned confirmed parties must be included; preview must warn about them but must not block export.
+- **FR-136** Each export run must retain the exact generated file in protected storage for the event lifetime and record actor, timestamp, criteria, mapping version, counts, and digest. Event-data deletion must remove retained files.
+- **FR-137** Corrections after handoff must follow the agreed theater reconciliation procedure.
+
+## Seating Plan
+
+- **FR-140** Seating must be an organizer-only, non-blocking module. Its absence, invalidity, or incomplete assignments must not block or mutate imports, RSVP, campaigns, deadlines, capacity, global locking, or invitation status.
+- **FR-141** The auditorium must consist of an ordered configurable number of rows, each with its own positive seat count and configurable stable row and seat labels. New configuration should default to 18 rows of 18 seats.
+- **FR-142** Structural row-length or seat-label changes after assignments exist must require all seating assignments to be cleared first.
+- **FR-143** Only confirmed parties may be shown or assigned. Pending, declined, and expired parties must not appear in the seating module.
+- **FR-144** Every assigned party must occupy exactly its allocated number of contiguous seats in one row. The algorithm and manual adjustment must never split a party across rows.
+- **FR-145** Automatic assignment must preserve valid manually adjusted assignments, replace all prior automatic assignments on each explicit run, and never run automatically in response to RSVP or party changes.
+- **FR-146** Automatic assignment must maximize the number of completely seated parties before applying seat-quality preferences. Among feasible placements it must prefer priority 1, then 2, then 3; within a priority it must prefer earlier confirmation time and then stable party ID. Better seats are front rows first and blocks nearest the row center second.
+- **FR-147** A manual move must lock that party's assignment automatically. A later run must respect valid locked assignments.
+- **FR-148** A decline, allocation change, or other source change that makes an assignment invalid must release it and flag the party for review without rejecting the source operation.
+- **FR-149** If not every confirmed party can be placed under the hard contiguity rule, the run must retain valid assignments and report every unseated party; it must not create partial assignments.
 
 ## Audit
 

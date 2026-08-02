@@ -18,12 +18,12 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 | OD-10 | Is CSV import strictly all-or-nothing? | Decided | Product owner | Yes; correct invalid rows and preview again. | Phase 3 |
 | OD-11 | How should duplicate emails across batches be handled? | Decided | Requestor | Block by default and require an explicit correction or documented exception. | Phase 3 |
 | OD-12 | Which organizer roles may import, send, override, lock, and export? | Decided | System owner | Use `Operator` and `ElevatedOperator`; reserve overrides and lock for elevated operators. | Phase 3 |
-| OD-30 | May persisted draft import data exist before commit? | Decided | Requestor | Persist protected draft rows for review; do not create live parties or reserve capacity until commit. | Batch management |
+| OD-30 | May persisted draft import data exist before commit? | Decided | Requestor | No. Keep upload review temporary and persist only after one confirmed, transactionally revalidated import. | Batch management |
 | OD-31 | Are batch display names unique? | Decided | Requestor | Require case-insensitive uniqueness among non-deleted batches. | Batch management |
 | OD-32 | Who may administer committed batch deadlines and regenerate RSVP tokens? | Decided | Requestor | Restrict both to `ElevatedOperator`; require reason and confirmation. | Batch management |
 | OD-33 | What happens when a deadline is extended after system expiry? | Decided | Requestor | Reopen only unanswered parties expired by the prior system deadline; organizer-expired parties remain terminal. | Batch management |
 | OD-34 | How are raw RSVP tokens retained for email delivery? | Decided | Requestor | Store the raw token with its hash in the restricted token record for manual one-off email rendering. Never expose it in UI, audit, logs, exports, or errors. | Batch management and Phase 4 |
-| OD-35 | What draft-source retention applies? | Decided | Requestor | Retain normalized draft rows and source digest only; do not retain raw CSV. Delete drafts after the approved operational window. | Batch management |
+| OD-35 | What draft-source retention applies? | Decided | Requestor | No draft source is persisted. Discard temporary preview data after import, replacement, expiry, or session loss. | Batch management |
 
 ## Email
 
@@ -32,7 +32,7 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 | OD-13 | Which organization owns the Resend account? | Decided | System owner | Organization-owned account, not a developer's personal account. | Phase 4 |
 | OD-14 | Which sending domain or subdomain, From name, From address, and Reply-To are approved? | Decided | Communications and IT | Configure approved sender identity in elevated organizer UI; require a verified organization-owned Resend domain and monitored Reply-To. Keep API credentials outside the UI. | Phase 4 |
 | OD-15 | Which current Resend plan and provider limits apply during the event window? | Decided | System owner | Upgrade before launch; keep the daily send ceiling and provider rate limits configurable and verify current Resend documentation before sending. | Phase 4 |
-| OD-16 | Who approves invitation and reminder content? | Decided | Communications | `Operator` and `ElevatedOperator` may create, edit, and approve versioned templates. | Phase 4 |
+| OD-16 | Who approves invitation and reminder content? | Decided | Communications | `Operator` and `ElevatedOperator` may save versioned templates that become immediately usable; no separate approval gate is required. | Phase 4 |
 | OD-17 | When are reminders sent and how many are allowed per invitation? | Decided | Requestor | All sending is manually triggered. Permit one manually triggered reminder to active pending parties before each deadline. | Phase 4 |
 | OD-18 | How are bounces, complaints, suppressions, corrections, and resend requests handled? | Decided | Communications and organizer | Store normalized dispatch state for each party; surface it in party and campaign UI, suppress complaints/permanent bounces, reuse the active link for normal resends, and require corrected addresses for resend. | Phase 4 |
 
@@ -40,12 +40,12 @@ Status values are `Open`, `Proposed`, `Decided`, or `Deferred`. Owners are place
 
 | ID | Decision | Status | Owner | Recommended Default | Blocks |
 | --- | --- | --- | --- | --- | --- |
-| OD-19 | What exact CSV schema, delimiter, encoding, and row model does the theater require? | Decided | Theater | Test a representative sample through the theater's import process. | Phase 5 |
+| OD-19 | What exact export schema, delimiter, encoding, and row model does the theater require? | Open | Theater | Obtain and test a representative theater contract; do not implement a guessed production mapping. | Phase 5 |
 | OD-20 | How will the theater distribute seat assignments and tickets? | Decided | Theater | Theater sends tickets directly using its established system. | Scope and Phase 5 |
 | OD-21 | What accessibility fields and terminology can the theater accept? | Decided | Theater | Prefer structured categories plus optional details if supported; otherwise map the approved text field. | Phases 2 and 5 |
 | OD-22 | How and when is the final manifest transferred securely? | Decided | Theater and system owner | Use an approved protected channel, not ordinary unencrypted attachment forwarding. | Phase 5 |
 | OD-23 | How are corrections, cancellations, or late exceptions communicated after handoff? | Decided | Theater and requestor | Define a named contact, cutoff, and versioned replacement or delta process. | Phase 5 |
-| OD-24 | What event-day operations and staffing does the theater provide? | Decided | Theater | Theater owns check-in, seating, walk-ins, and guest direction. | Operational readiness |
+| OD-24 | What event-day operations and staffing does the theater provide? | Decided | Theater | Theater owns official seat communication, ticketing, check-in, walk-ins, and guest direction; the application may provide an isolated pre-event seating plan. | Operational readiness |
 
 ## Security, Privacy, and Operations
 

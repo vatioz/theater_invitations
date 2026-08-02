@@ -20,7 +20,7 @@ Implemented:
 - New and regenerated token rows retain their raw token only for manual email rendering; public lookup continues to use the hash.
 - Organizer batch, party, audit, and settings routes exist.
 - Elevated organizers can configure sender identity, Reply-To, daily send ceiling, and the operational sender-domain verification marker. API keys remain outside the UI.
-- Operators and elevated organizers can create and approve versioned templates.
+- Operators and elevated organizers can create versioned templates. The current approval gate is scheduled for removal.
 - Operators and elevated organizers can prepare an initial-invitation campaign for one eligible committed batch.
 - Campaign preparation creates durable, immutable recipient dispatch snapshots before any provider request is attempted.
 - The Email campaigns route lists campaigns, creates and approves templates, and prepares initial-invitation campaign snapshots.
@@ -38,10 +38,10 @@ Migration note: existing protected delivery envelopes are intentionally removed 
 The first campaign screen is a persistence foundation, not a final send workflow. Resolve these before enabling provider delivery:
 
 - Fix literal display defects such as `template @campaign.TemplateVersionNumber` and `InitialInvitation v@template.VersionNumber`; render actual version numbers and human-readable campaign/template types.
-- Change the first preparation action from `Queued` to `ReadyForReview`. A campaign must not appear queued until an organizer gives final confirmation.
+- Keep preparation in `ReadyForReview`. Replace the redundant confirm-to-queue plus confirmed-send sequence with one confirmed `Send now` action.
 - Replace campaign summary rows with a campaign detail/review route containing recipient, sender, template, and dispatch snapshot information.
 - Add template placeholder guidance, supported-placeholder validation, starter invitation content, and separate HTML/plain-text preview.
-- Add a controlled test-send workflow before any campaign can be confirmed for guests.
+- Add a controlled optional test-send workflow that does not gate use of a saved template.
 
 The current Resend free tier is not a production launch assumption. At the time this specification was recorded, Resend documents a 3,000-email monthly allowance and a 100-email daily limit on its free transactional plan. The planned event requires an upgraded account before launch; current provider limits must be rechecked immediately before sending.
 
@@ -52,7 +52,7 @@ The current Resend free tier is not a production launch assumption. At the time 
 | Sender identity | Configure From display name, From address, Reply-To, and daily send ceiling in elevated organizer UI. Sender domains must be verified in Resend. API keys remain protected deployment secrets. |
 | Provider plan | Upgrade before launch. Keep all delivery limits configurable rather than embedding plan limits. |
 | Campaign authority | `Operator` and `ElevatedOperator` may create, approve, and manually trigger campaigns. |
-| Template authority | `Operator` and `ElevatedOperator` may create, edit, and approve versioned templates. |
+| Template authority | `Operator` and `ElevatedOperator` may create and edit versioned templates. A saved version is immediately usable; test send remains optional. |
 | Sending schedule | All initial invitations, reminders, retries, and resends are manually triggered. No automatic scheduling. |
 | Reminder policy | One manually triggered reminder per effectively active pending party before its deadline. |
 | Normal resend | Reuse the party's current active RSVP link. |
@@ -67,8 +67,8 @@ The phases below are implementation gates. Do not skip a phase merely because pe
 | Phase | Status | Outcome | Required work |
 | --- | --- | --- | --- |
 | E0: Campaign foundation | Completed | Sender settings, templates, campaigns, dispatch snapshots, friendly UI labels, and initial email workspace exist. | None. |
-| E1: Review and rendering | In Progress | An organizer can safely inspect representative rendered content and explicitly queue a campaign. | Controlled provider-backed test send remains to be added. |
-| E2: Provider delivery | In Progress | An organizer can manually send a confirmed campaign sequentially through Resend and persist accepted/failed result per recipient. | Persistent production Data Protection keys, staging rehearsal, and party-level result UI remain. |
+| E1: Review and rendering | In Progress | An organizer can safely inspect representative rendered content before one confirmed send action. | Controlled provider-backed test send remains to be added; remove the template-approval and separate queue steps. |
+| E2: Provider delivery | In Progress | An organizer can manually send a reviewed campaign sequentially through Resend and persist accepted/failed result per recipient. | Add daily-limit pause/continue, persistent production Data Protection keys, staging rehearsal, and party-level result UI. |
 | E3: Delivery observability | Completed | Organizers can understand campaign and party email state. | Campaign dispatch detail and party latest-status/history are implemented; resend controls remain E5 work. |
 | E4: Webhooks and suppression | Not Started | Provider delivery events affect future audience selection safely. | Verified webhook endpoint, idempotent event processing, delivered/bounce/complaint normalization, suppression records, and staging rehearsal. |
 | E5: Reminder and resend operations | In Progress | Operators can prepare one manual reminder campaign and normal resends using the active link. | Elevated link regeneration remains available as a separate token action; staging rehearsal remains. |
@@ -78,21 +78,22 @@ The phases below are implementation gates. Do not skip a phase merely because pe
 Use these states consistently in persistence, UI, and audit records:
 
 ```text
-Draft -> ReadyForReview -> Queued -> Sending -> Completed
-                         -> Cancelled    -> PartiallyFailed
-                                         -> Failed
+ReadyForReview -> Sending -> Completed
+                     |----> PausedDailyLimit -> Sending
+                     |----> PartiallyFailed
+                     |----> Failed
+ReadyForReview -> Cancelled
 ```
 
-- `Draft`: campaign metadata may still change; no immutable recipient snapshot exists.
 - `ReadyForReview`: template, sender, batch/scope, recipient snapshot, and skipped-recipient reasons are frozen for organizer review. No provider call is allowed.
-- `Queued`: an operator explicitly confirmed the reviewed campaign. Dispatches are eligible for worker claim.
 - `Sending`: one or more dispatches are actively leased or being processed.
+- `PausedDailyLimit`: the approved campaign reached the configured daily ceiling and has unresolved recipients. It may continue after the displayed reset time without another confirmation.
 - `Completed`: every dispatch reached its final successful provider state available at the current phase, initially `Accepted`.
 - `PartiallyFailed`: at least one dispatch has a terminal failure and at least one has been accepted/delivered.
 - `Failed`: no dispatch completed successfully or the campaign cannot proceed due to a terminal configuration failure.
 - `Cancelled`: a reviewed, not-yet-sent campaign was explicitly cancelled. This requires confirmation and audit.
 
-Campaign preparation creates a `ReadyForReview` campaign. Only final confirmation transitions it to `Queued`.
+Campaign preparation creates a `ReadyForReview` campaign. One final confirmed `Send now` action transitions it to `Sending`; an internal durable queue may support execution but is not a second organizer step.
 
 ## Sender Configuration
 
@@ -124,11 +125,11 @@ Persist versioned application-owned templates rather than depending on mutable p
 | Subject | Renderable subject line. |
 | HTML body | Required HTML representation. |
 | Plain-text body | Required intentional plain-text representation. |
-| State | `Draft`, `Approved`, or `Retired`. |
-| Creator/approver metadata | Authenticated actor and UTC timestamps. |
+| State | `Active` or `Retired`. A saved active version is immediately selectable. |
+| Creator metadata | Authenticated actor and UTC timestamp. |
 | Content digest | Supports reproducibility and audit. |
 
-Approved templates must include event identity, party allocation, deadline with time-zone label, RSVP URL, and support contact. Escape all imported/guest-provided data for HTML, plaintext, and URL contexts. Never expose internal IDs when the opaque RSVP token is sufficient.
+Saved templates must include event identity, party allocation, deadline, RSVP URL, and support contact. Default content is Czech. Escape all imported/guest-provided data for HTML, plaintext, and URL contexts. Never expose internal IDs when the opaque RSVP token is sufficient.
 
 Template preview must support long names, diacritics, one-seat parties, multi-seat parties, and both HTML/plain-text views.
 
@@ -143,10 +144,10 @@ One manually approved send operation.
 | ID | Stable campaign reference. |
 | Type | `InitialInvitation`, `Reminder`, or `Resend`. |
 | Batch or explicit scope | Initial invitation normally selects one committed batch. |
-| Template ID/version snapshot | Immutable approved version used for rendering. |
+| Template ID/version snapshot | Immutable saved version used for rendering. |
 | Sender snapshot | From display name/address and Reply-To at approval time. |
 | Creator/confirmer metadata | Authenticated actor and UTC timestamps. |
-| State | `Draft`, `ReadyForReview`, `Approved`, `Queued`, `Sending`, `Completed`, `PartiallyFailed`, or `Failed`. |
+| State | `ReadyForReview`, `Sending`, `PausedDailyLimit`, `Completed`, `PartiallyFailed`, `Failed`, or `Cancelled`. |
 | Recipient summary | Prepared, skipped, accepted, delivered, failed, bounced, complained, suppressed counts. |
 
 ### `EmailDispatch`
@@ -193,7 +194,7 @@ Use an explicit multi-step workflow:
    - Exclude confirmed, declined, expired, revoked-token, invalid-address, and suppressed recipients.
 
 2. **Template**
-   - Choose an approved template version.
+   - Choose a saved active template version.
    - Show sender identity and Reply-To snapshot.
 
 3. **Preview and test**
@@ -201,11 +202,11 @@ Use an explicit multi-step workflow:
    - Allow a clearly marked test send to an authorized test address before campaign approval.
    - A test send must not alter live campaign recipient state.
 
-4. **Final confirmation**
+4. **Review and send**
    - Show final recipient count, skipped/suppressed count, batch/scope, template version, sender identity, and configured daily ceiling.
-   - Confirmation creates an immutable campaign and recipient snapshot. It must not send directly in the browser request.
+   - One confirmed `Send now` action begins server-side execution. The client must not send individual provider requests.
 
-For E1, preparing the snapshot transitions the campaign to `ReadyForReview`; final confirmation alone transitions it to `Queued`.
+Preparing the snapshot transitions the campaign to `ReadyForReview`. Any material source-data change invalidates it and requires preparation and review again.
 
 ### 3. Campaign Detail
 
@@ -225,17 +226,18 @@ Show the latest delivery state and historical dispatches for that party. Offer:
 
 ## Delivery Execution
 
-For this one-off event helper, sending is a manually triggered server-side campaign operation. Campaign confirmation persists campaign and dispatch rows transactionally; an explicit `Send campaign now` action then sends unresolved recipients sequentially. Do not send from client-side JavaScript.
+For this one-off event helper, sending is a manually triggered server-side campaign operation. One confirmed `Send now` action persists the approval and begins sending unresolved recipients sequentially. Do not send from client-side JavaScript.
 
 The manual send operation must:
 
-1. Process unresolved recipients sequentially and stop before the configured daily ceiling is exceeded.
+1. Process unresolved recipients sequentially and pause with counts and reset timing before the configured daily ceiling is exceeded.
 2. Decrypt the protected token envelope only while rendering the individual message.
 3. Call the provider through a replaceable adapter.
 4. Use a stable provider idempotency key per campaign-party dispatch.
 5. Persist provider message ID and normalized state before moving to the next recipient.
 6. Mark transient and terminal failures as `Failed`; a later manual retry reuses the same idempotency key.
-7. Avoid automatic retry for any failure category in this one-off workflow.
+7. Allow an organizer to continue a daily-limit-paused campaign after reset without another confirmation.
+8. Avoid automatic retry for any failure category in this one-off workflow.
 
 Use an interface such as:
 
@@ -264,12 +266,12 @@ Provider acceptance is not delivery. The UI must distinguish `Accepted` from `De
 - Never project raw token values into organizer DTOs, exports, audit records, logs, exception messages, or email-status UI.
 - Restrict database access because database confidentiality now protects RSVP-link confidentiality.
 - Do not store message bodies, raw tokens, token hashes, full RSVP URLs, query strings, provider credentials, or accessibility text in routine logs/audits.
-- Make campaigns, dispatches, template approval, token regeneration, retries, and suppression changes auditable with safe actor/outcome/reason data.
+- Make campaigns, dispatches, template changes, token regeneration, retries, and suppression changes auditable with safe actor/outcome/reason data.
 - Treat recipient email and delivery status as personal data under the retention policy.
 
 ## Acceptance Criteria
 
-1. An authorized organizer can preview and test an approved template without creating a live campaign dispatch.
+1. An authorized organizer can preview and test a saved template without creating a live campaign dispatch.
 2. Campaign confirmation creates an immutable recipient snapshot and one dispatch per eligible party before provider calls begin.
 3. A whole-batch initial invitation sends each eligible party once per approved campaign, subject to configured limits.
 4. A retry does not resend a dispatch already accepted by the provider.
@@ -291,11 +293,11 @@ Provider acceptance is not delivery. The UI must distinguish `Accepted` from `De
 
 ### E1: Review And Rendering
 
-1. A `ReadyForReview` campaign shows the exact batch, sender snapshot, approved template version, eligible count, skipped count, and dispatch list.
+1. A `ReadyForReview` campaign shows the exact batch, sender snapshot, saved template version, eligible count, skipped count, and dispatch list.
 2. Supported placeholders render correctly for HTML and plain text; unsupported placeholders are rejected before approval.
 3. Previews cover long names, diacritics, one-seat, and multi-seat allocations.
 4. A test send does not create a guest campaign dispatch or change RSVP state.
-5. Final confirmation requires an authorized organizer and is the only action that transitions a review-ready campaign to `Queued`.
+5. One final confirmed `Send now` action is the only organizer approval needed to transition a review-ready campaign into execution.
 
 ### E2: Provider Delivery
 

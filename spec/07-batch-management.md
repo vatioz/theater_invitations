@@ -13,9 +13,9 @@ This scope does not send email. B4 establishes the token lifecycle and persisten
 - Store every deadline as a UTC instant. Organizers enter and view it as a local date and time in the configured event time zone, with the zone visibly labeled.
 - Reject nonexistent or ambiguous local times at daylight-saving transitions. Do not silently choose an offset.
 - Use the canonical reservation formula: confirmed seats plus pending seats whose batch deadline is strictly later than the authoritative current time.
-- Drafts do not reserve capacity. Capacity shown during draft review is an estimate; batch commit and deadline extension must recalculate capacity transactionally.
+- Temporary previews do not reserve capacity. Capacity shown during preview is an estimate; import and deadline extension must recalculate capacity transactionally.
 - Use PostgreSQL serializable transactions and bounded retry for batch commit, deadline extension, and any other operation that can increase reservation.
-- Require server-side authorization. `Operator` may create and edit drafts. Only `ElevatedOperator` may change a committed batch deadline because this can change guest eligibility and capacity.
+- Require server-side authorization. `Operator` may preview and import batches. Only `ElevatedOperator` may change a committed batch deadline because this can change guest eligibility and capacity.
 - Require an expected batch version for consequential mutations. A stale request must be rejected and show current data.
 - Audit accepted and rejected batch mutations with actor, batch reference, timestamp, outcome, reason category, and correlation ID. Never record raw CSV content, raw RSVP tokens, token hashes, full RSVP URLs, or accessibility text in audit metadata.
 
@@ -28,15 +28,13 @@ Extend `InvitationBatch` with:
 | Stable ID | Existing non-sequential UUID. |
 | Display name | Organizer-supplied, trimmed, maximum 200 characters. Decide whether active names must be unique. |
 | Deadline UTC | Required before a batch is committed or sendable. |
-| State | At minimum `Draft`, `Prepared`, and `Committed`. Phase 4 may add `Sending` and `Completed`. |
+| State | A persisted batch is `Committed`; preview state is temporary and not part of the batch lifecycle. |
 | Creation/modification metadata | UTC timestamp and authenticated actor for creation and later changes. |
 | Commit metadata | UTC timestamp and actor when transition to `Committed` succeeds. |
-| Source digest | Digest of the uploaded content or canonical parsed representation for review and audit. |
+| Source digest | Digest of the confirmed upload or canonical parsed representation for audit. |
 | Concurrency version | Existing PostgreSQL `xmin` mapping. |
 
-Persist draft rows separately from live `InvitationParty` records. Each draft row needs a stable ID, source row number, normalized candidate name/email/company/seat values, and structured validation issue codes. Do not create a live party, RSVP token, or capacity reservation when saving a draft.
-
-Raw CSV retention is optional. If retained, protect it, limit access, and define deletion/anonymization timing. Parsed draft rows remain personal data even without the source file.
+Do not persist draft rows. Keep parsed preview rows in temporary server-owned state and discard them after import, replacement, expiry, restart, or session loss. Never create a live party, RSVP token, or capacity reservation during preview, and do not retain the raw CSV after the import operation.
 
 ## B1: Organizer-Supplied Batch Name And Deadline
 
@@ -69,50 +67,37 @@ Before committing a batch, show the name, deadline in local time and UTC, alloca
 5. An unauthorized identity cannot create or edit a batch draft.
 6. Public RSVP evaluates eligibility against the committed UTC deadline.
 
-## B2: Persisted Draft-Batch Workflow
+## B2: Temporary Preview And Transactional Import
 
 **Priority:** Medium
-**Status:** In Progress
+**Status:** Open replacement of the implemented persisted-draft workflow
 **Requirements:** FR-061, FR-062, FR-063, FR-064, FR-070, FR-073, FR-081, FR-122; OD-03, OD-10, OD-11, OD-12, OD-30, OD-35
-
-### Lifecycle
-
-```text
-Draft -> Prepared -> Committed
-```
-
-- `Draft`: source is parsed and saved; it may contain validation errors or duplicate concerns.
-- `Prepared`: all rows are valid and eligible for confirmation; its capacity view remains advisory.
-- `Committed`: live parties are created and the batch becomes operational. Draft rows become immutable except for authorized deadline administration.
-
-Phase 4 may add `Sending` and `Completed`; these must not be inferred from draft state.
 
 ### Workflow
 
 1. An operator enters B1 metadata and uploads a canonical CSV.
-2. The server creates or updates a server-owned draft, persists normalized draft rows and validation findings, and records a source digest.
-3. The review page, available across sessions, shows valid rows, invalid rows, duplicate concerns, party count, seat total, capacity impact, current remaining capacity, and draft version.
-4. Saving/reviewing a draft creates no live `InvitationParty` and consumes no capacity.
-5. Commit requires explicit confirmation. The service loads the draft by ID, checks its expected version, and in one serializable transaction revalidates rows, email duplicates, deadline, draft state, and current capacity.
-6. On success, transition the batch to `Committed`, create every live party, create B4 token state, write the audit event, and commit together. On failure, create neither live parties nor a partially committed batch.
+2. The server parses the upload into temporary server-owned preview state and records no batch or row.
+3. The review shows valid rows, detailed invalid-row findings, duplicates, ignored headers, party count, seat total, capacity impact, and current remaining capacity.
+4. Invalid preview data cannot be edited in the application or committed. The organizer corrects the source file and previews again.
+5. A valid preview offers one explicit `Confirm and import` action. In one serializable transaction, the service authoritatively reparses or revalidates the server-held upload, then rechecks email duplicates, deadline, and current capacity.
+6. On success, create the committed batch, every live party, B4 token state, and audit event together. On failure, persist none of them.
 
 ### Security And Retention
 
-- Never trust an `ImportPreview`, row total, capacity result, or parsed rows supplied by the client at commit time.
+- Never trust an `ImportPreview`, row total, capacity result, or parsed rows supplied by the client at import time.
 - Block duplicate email addresses across committed batches by default. Any future exception requires explicit elevated authorization, a reason, and audit.
-- Draft visibility must follow organizer PII permissions; do not expose draft invitee rows to a role not approved to see invitation data.
-- Define draft expiration and deletion/anonymization before production. Expired, deleted, or superseded drafts are not committable.
+- Preview visibility must follow organizer PII permissions; do not expose invitee rows to a role not approved to see invitation data.
+- Bound temporary preview lifetime and memory use. Expired, replaced, or lost previews are not importable and require another upload.
 
 ### Acceptance Criteria
 
-1. A draft can be reopened from a fresh session with its metadata, rows, findings, and version intact.
-2. Draft save and review do not create live parties or reserve capacity.
-3. Invalid, duplicate, oversized, quoted, Unicode, and multiline input keeps the draft uncommittable while retaining safe findings.
-4. Commit is all-or-nothing and revalidates duplicate/capacity state at transaction time.
-5. Concurrent draft commits cannot overbook the event.
-6. A duplicate introduced after preview causes commit rejection with no party insert.
-7. A stale draft commit is rejected and returns the current draft detail.
-8. Accepted and rejected draft actions are audited without source content or token data.
+1. Preview creates no persisted batch, party, token, or draft row and reserves no capacity.
+2. Invalid, duplicate, oversized, quoted, Unicode, and multiline input remains uncommittable while showing safe detailed findings.
+3. Import is all-or-nothing and revalidates duplicate/capacity state at transaction time.
+4. Concurrent imports cannot overbook the event.
+5. A duplicate introduced after preview causes rejection with no batch or party insert.
+6. An expired or missing temporary preview cannot be imported.
+7. Accepted and rejected imports are audited without source content or token data.
 
 ## B3: Deadline Administration With Capacity Rechecks
 
@@ -187,7 +172,7 @@ Before real delivery, identify parties created with unrecoverable random `TokenH
 
 ## Selected Defaults
 
-1. Persist protected normalized draft rows and a source digest, but never the raw CSV; drafts do not create live parties or reserve capacity.
+1. Keep preview rows temporary and server-owned; persist no draft rows or raw CSV. One confirmed transaction creates the committed batch, parties, and tokens.
 2. Require case-insensitive batch display-name uniqueness among non-deleted batches.
 3. Allow Operators to create and edit drafts. Require `ElevatedOperator`, reason, and confirmation for committed deadline changes and token regeneration.
 4. Reopen only unanswered parties expired by the prior system deadline. Organizer-expired parties remain terminal.
@@ -196,6 +181,6 @@ Before real delivery, identify parties created with unrecoverable random `TokenH
 ## Recommended Implementation Order
 
 1. B1 batch metadata and organizer-zone deadline input.
-2. B2 persisted draft rows, review, transactional commit, and retention.
+2. B2 temporary preview, transactional import, and removal of the persisted-draft UI and lifecycle.
 3. B3 deadline administration after the expiration/reopening policy is approved.
 4. B4 token issuance/outbox preparation before Phase 4 email delivery.
