@@ -2,6 +2,8 @@
 
 This document records the decisions from the August 2026 product review covering the public RSVP page, batch and campaign workflows, Czech localization, seating, CSV data, and theater export. The functional requirements in [02-functional-requirements.md](02-functional-requirements.md) remain normative.
 
+The ordered implementation for Czech localization, public RSVP, CSV data, batch import, and campaign workflow is defined in [11-ordered-product-change-implementation.md](11-ordered-product-change-implementation.md). Seating and export remain deferred.
+
 ## Status And Boundaries
 
 - The decisions in this document are **Agreed** unless marked **Open**.

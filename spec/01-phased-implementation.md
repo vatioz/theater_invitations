@@ -2,6 +2,8 @@
 
 The phases below describe software delivery increments. Invitation Batch 1, reminders, and later invitation batches are operational workflows, not implementation phases.
 
+The current ordered implementation for the agreed Czech localization, RSVP redesign, CSV schema, batch-flow, and campaign-flow changes is [11-ordered-product-change-implementation.md](11-ordered-product-change-implementation.md). For those changes, spec 11 supersedes older deliverable wording in this historical roadmap. Seating and export remain deferred.
+
 ## Phase 0: Decisions and Foundations
 
 ### Goal

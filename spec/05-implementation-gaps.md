@@ -36,7 +36,7 @@ Deferred work from Phases 1-3, organized for a one-off production event.
 | R3 | Browser, mobile, and accessibility verification | High | Deferred | Manual and automated browser and accessibility verification is documented in [06-public-rsvp-experience.md](06-public-rsvp-experience.md) but is not currently planned for implementation. |
 | R4 | Guard development seed data | Medium | In Progress | Composition and token-absence tests cover Development, Staging, and Production; the production deployment smoke query remains to be wired into deployment operations. |
 | R5 | Public page-view audit events | Low | Deferred | Sanitized public page-view auditing is documented in [06-public-rsvp-experience.md](06-public-rsvp-experience.md) but is not currently planned for implementation. |
-| R6 | Czech-only UI and focused RSVP card | High | Open | Translate all public and organizer UI plus default email content; implement direct response actions and Czech locale formatting as specified in [10-product-workflow-and-seating-changes.md](10-product-workflow-and-seating-changes.md). |
+| R6 | Czech-only UI and focused RSVP card | High | Open | Translate all public and organizer UI plus default email content; implement direct response actions and Czech locale formatting in Phases 1 and 2 of [11-ordered-product-change-implementation.md](11-ordered-product-change-implementation.md). |
 
 ## Auditing And Diagnostics
 
@@ -63,7 +63,7 @@ Treat batch management as a separate follow-up phase.
 | ID | Gap | Priority | Status | Details |
 | --- | --- | --- | --- | --- |
 | B1 | Organizer-supplied batch name and deadline | High | In Progress | Draft metadata and configured-zone deadline input are implemented; detailed behavior is in [07-batch-management.md](07-batch-management.md). |
-| B2 | Replace persisted drafts with temporary preview | High | Open | Remove the implemented persisted draft UI and lifecycle. Keep preview in memory and commit only after one confirmation and authoritative transactional revalidation; see [10-product-workflow-and-seating-changes.md](10-product-workflow-and-seating-changes.md). |
+| B2 | Replace persisted drafts with temporary preview | High | Open | Remove the implemented persisted draft UI and lifecycle. Keep preview in memory and commit only after one confirmation and authoritative transactional revalidation; see Phase 4 of [11-ordered-product-change-implementation.md](11-ordered-product-change-implementation.md). |
 | B3 | Deadline administration with capacity rechecks | High if multiple batches or extensions are used | In Progress | Transactional deadline changes and system-expiration reopening are implemented; browser and concurrency coverage remains to be expanded. |
 | B4 | RSVP token lifecycle for sending invitations | High before Phase 4 | In Progress | Active token records retain raw tokens only for restricted manual email rendering; hash lookup and regeneration are implemented. |
 
@@ -75,4 +75,4 @@ Implement `B2` and `B3` only when several invitation waves or deadline changes a
 
 ## Agreed Product Changes
 
-The Czech-only UI, RSVP redesign, workflow simplification, seating module, extended import schema, and theater export boundary are specified in [10-product-workflow-and-seating-changes.md](10-product-workflow-and-seating-changes.md). They are agreed requirements but are not yet implemented unless a more specific status above says otherwise.
+The Czech-only UI, RSVP redesign, workflow simplification, seating module, extended import schema, and theater export boundary are specified in [10-product-workflow-and-seating-changes.md](10-product-workflow-and-seating-changes.md). The active implementation order for Czech localization, public RSVP, CSV data, batch import, and campaign workflow is [11-ordered-product-change-implementation.md](11-ordered-product-change-implementation.md). Seating and export remain deferred. These are agreed requirements but are not yet implemented unless a more specific status above says otherwise.
