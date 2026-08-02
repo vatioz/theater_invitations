@@ -31,6 +31,21 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Correction_round_trips_priority_and_phone_without_auditing_the_phone()
+    {
+        await using var db = CreateDb();
+        var party = await AddPartyAsync(db);
+
+        await CreateService(db).CorrectPartyAsync(party.Id, party.Version, party.PrimaryGuestName, party.Email, null, 1, " +420 777 123 ", party.AllocatedSeats);
+
+        db.ChangeTracker.Clear();
+        var updated = await db.InvitationParties.SingleAsync();
+        Assert.Equal(1, updated.Priority);
+        Assert.Equal("+420 777 123", updated.Phone);
+        Assert.DoesNotContain("777", (await db.AuditEvents.SingleAsync()).CorrelationId);
+    }
+
+    [Fact]
     public async Task Correction_rejects_invalid_email_server_side()
     {
         await using var db = CreateDb();

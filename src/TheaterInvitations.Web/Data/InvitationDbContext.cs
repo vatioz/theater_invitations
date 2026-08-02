@@ -48,11 +48,14 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.PrimaryGuestName).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Email).HasMaxLength(320).IsRequired();
             entity.Property(x => x.Company).HasMaxLength(200);
+            entity.Property(x => x.Phone).HasMaxLength(64);
+            entity.Property(x => x.Priority).HasDefaultValue(3);
             entity.Property(x => x.TokenHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.AccessibilityRequirements).HasMaxLength(500);
             entity.Property(x => x.Version).IsRowVersion();
             entity.HasIndex(x => x.TokenHash).IsUnique();
             entity.ToTable(table => table.HasCheckConstraint("CK_InvitationParties_AllocatedSeats", "\"AllocatedSeats\" > 0"));
+            entity.ToTable(table => table.HasCheckConstraint("CK_InvitationParties_Priority", "\"Priority\" BETWEEN 1 AND 3"));
         });
 
         modelBuilder.Entity<InvitationDraftRow>(entity =>
@@ -60,6 +63,7 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.PrimaryGuestName).HasMaxLength(200);
             entity.Property(x => x.Email).HasMaxLength(320);
             entity.Property(x => x.Company).HasMaxLength(200);
+            entity.Property(x => x.Phone).HasMaxLength(64);
             entity.Property(x => x.ValidationIssue).HasMaxLength(500);
             entity.HasIndex(x => new { x.BatchId, x.SourceRowNumber }).IsUnique();
             entity.HasOne<InvitationBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);

@@ -1,0 +1,4 @@
+primary_guest_name,phone,email,priority,company,allocated_seats
+Nováková Jana,+420 777 123 456,jana.novakova@example.test,1,Divadlo Praha,2
+Dvořák Petr,+420 602 987 654,petr.dvorak@example.test,2,,1
+Svobodovi,,svobodovi@example.test,3,Studio Svoboda,4

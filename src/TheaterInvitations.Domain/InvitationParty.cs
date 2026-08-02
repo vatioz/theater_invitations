@@ -7,6 +7,8 @@ public sealed class InvitationParty
     public string PrimaryGuestName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string? Company { get; set; }
+    public int Priority { get; set; } = 3;
+    public string? Phone { get; set; }
     public int AllocatedSeats { get; set; }
     public string TokenHash { get; set; } = string.Empty;
     public InvitationStatus Status { get; private set; } = InvitationStatus.Pending;
@@ -67,7 +69,7 @@ public sealed class InvitationParty
         return RsvpResult.Applied;
     }
 
-    public void CorrectDetails(string primaryGuestName, string email, string? company, int allocatedSeats)
+    public void CorrectDetails(string primaryGuestName, string email, string? company, int priority, string? phone, int allocatedSeats)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(primaryGuestName);
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
@@ -75,6 +77,9 @@ public sealed class InvitationParty
         PrimaryGuestName = primaryGuestName.Trim();
         Email = email.Trim();
         Company = string.IsNullOrWhiteSpace(company) ? null : company.Trim();
+        if (priority is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(priority));
+        Priority = priority;
+        Phone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
         AllocatedSeats = allocatedSeats;
     }
 
