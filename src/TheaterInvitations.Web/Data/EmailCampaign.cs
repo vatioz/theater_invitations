@@ -18,5 +18,7 @@ public sealed class EmailCampaign
     public string ReviewFingerprint { get; set; } = string.Empty;
     public DateTimeOffset? InvalidatedAtUtc { get; set; }
     public string? InvalidationReasonCategory { get; set; }
+    public DateTimeOffset? PausedAtUtc { get; set; }
+    public DateTimeOffset? ContinueAfterUtc { get; set; }
     public uint Version { get; set; }
 }

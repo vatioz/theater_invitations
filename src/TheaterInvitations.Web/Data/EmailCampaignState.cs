@@ -9,5 +9,6 @@ public enum EmailCampaignState
     Completed = 4,
     PartiallyFailed = 5,
     Failed = 6,
-    Invalidated = 7
+    Invalidated = 7,
+    PausedDailyLimit = 8
 }
