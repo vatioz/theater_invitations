@@ -5,6 +5,7 @@
 @using TheaterInvitations.Web.Data
 @using TheaterInvitations.Web.Services
 @inject OrganizerService OrganizerService
+@inject BatchImportService BatchImportService
 
 <PageTitle>Správa dávek</PageTitle>
 <main class="organizer-page">
@@ -12,66 +13,65 @@
     @if (dashboard is null) { <p>Načítání údajů o dávkách...</p> }
     else
     {
-        <section class="rsvp-card">
-            <h2>Vytvořit návrh dávky</h2>
-            <p>Nahrajte sloupce CSV v libovolném pořadí: <code>primary_guest_name,email,allocated_seats,company,priority,phone</code>.</p>
-            <AuthorizeView Roles="Operator,ElevatedOperator" Context="draftAuth"><Authorized>
-                @if (dashboard.Configuration is null) { <p class="validation-message">Před vytvořením návrhu dávky nastavte akci.</p> }
-                else
-                {
-                    <EditForm Model="draftInput" OnValidSubmit="SaveDraftAsync" OnInvalidSubmit="InvalidDraftSubmit" FormName="batch-draft" class="manage-form batch-draft-form">
-                        <DataAnnotationsValidator /><ValidationSummary />
-                         <div class="batch-draft-fields"><label>Název dávky <InputText @bind-Value="draftInput.Name" /> <ValidationMessage For="@(() => draftInput.Name)" /></label><label>Termín <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="draftInput.DeadlineLocal" /></label></div>
-                         <p class="form-help">Všechny termíny dávek používají <strong>@dashboard.Configuration.TimeZoneId</strong>. Kapacita se znovu ověří při potvrzení.</p>
-                         <label class="file-picker">Soubor CSV <InputFile OnChange="SelectDraftFile" accept=".csv,text/csv" /></label>
-                         @if (draftFile is not null) { <p class="file-selected">Vybráno: @draftFile.Name</p> }
-                        @if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }
-                         <button type="submit">Uložit návrh ke kontrole</button>
-                    </EditForm>
-                }
-             </Authorized><NotAuthorized><p>K dávkám máte přístup pouze pro čtení.</p></NotAuthorized></AuthorizeView>
-        </section>
-
-        @if (selectedDraft is not null)
-        {
-            <section class="rsvp-card"><div class="draft-review"><div class="draft-review-heading"><div><p class="eyebrow">Kontrola návrhu</p><h2>@selectedDraft.Name</h2></div><span class="draft-state">@CzechPresentationFormatter.BatchState(selectedDraft.State)</span></div><p>@selectedDraft.Rows.Count řádků: <strong>@selectedDraft.Rows.Count(x => x.ValidationIssue is null) platných</strong>, @selectedDraft.Rows.Count(x => x.ValidationIssue is not null) neplatných. Termín: @FormatDeadline(selectedDraft.DeadlineUtc).</p>
-                @if (!string.IsNullOrWhiteSpace(selectedDraft.ValidationIssue)) { <p class="validation-message">@selectedDraft.ValidationIssue</p> }
-                @foreach (var row in selectedDraft.Rows.Where(x => x.ValidationIssue is not null)) { <p class="validation-message">Řádek @row.SourceRowNumber: @row.ValidationIssue</p> }
-                <AuthorizeView Roles="Operator,ElevatedOperator" Context="reviewAuth"><Authorized>
-                    @if (selectedDraft.State == InvitationBatchState.Prepared)
+        <AuthorizeView Roles="Operator,ElevatedOperator" Context="importAuth">
+            <Authorized>
+                <section class="rsvp-card">
+                    <h2>Import dávky</h2>
+                    <p>Nahrajte sloupce CSV v libovolném pořadí: <code>primary_guest_name,email,allocated_seats,company,priority,phone</code>.</p>
+                    @if (dashboard.Configuration is null) { <p class="validation-message">Před importem nastavte akci.</p> }
+                    else
                     {
-                        @if (confirmingCommit) { <p class="notice">Potvrdit tuto dávku? Před vytvořením skupin se znovu ověří kapacita a duplicitní e-maily.</p><button @onclick="CommitDraftAsync">Potvrdit potvrzení</button> <button class="button-secondary" @onclick="(() => confirmingCommit = false)">Zrušit</button> }
-                        else { <button @onclick="(() => confirmingCommit = true)">Potvrdit návrh dávky</button> }
+                        <EditForm Model="importInput" OnValidSubmit="PreviewImportAsync" class="manage-form">
+                            <DataAnnotationsValidator /><ValidationSummary />
+                            <div class="batch-draft-fields"><label>Název dávky <InputText @bind-Value="importInput.Name" @bind-Value:after="ClearPreview" /> <ValidationMessage For="@(() => importInput.Name)" /></label><label>Termín <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="importInput.DeadlineLocal" @bind-Value:after="ClearPreview" /></label></div>
+                            <p class="form-help">Termín používá časové pásmo <strong>@dashboard.Configuration.TimeZoneId</strong>. Kapacita a duplicity se při importu znovu ověří.</p>
+                            <label class="file-picker">Soubor CSV <InputFile OnChange="SelectFile" accept=".csv,text/csv" /></label>
+                            @if (sourceFile is not null) { <p class="file-selected">Vybráno: @sourceFile.Name</p> }
+                            @if (!string.IsNullOrWhiteSpace(error)) { <p class="validation-message" role="alert">@error</p> }
+                            <button type="submit" disabled="@isBusy">Náhled importu</button>
+                        </EditForm>
                     }
-                    @if (confirmingDelete) { <p class="notice">Odstranit tento návrh a všechny jeho uložené řádky? Tuto akci nelze vrátit zpět.</p><button class="button-danger" @onclick="DeleteDraftAsync">Odstranit návrh</button> <button class="button-secondary" @onclick="(() => confirmingDelete = false)">Zrušit</button> }
-                    else { <button class="button-secondary" @onclick="(() => confirmingDelete = true)">Odstranit návrh</button> }
-                </Authorized></AuthorizeView>
-            </div></section>
-        }
+                </section>
+                @if (preview is not null)
+                {
+                    <section class="rsvp-card"><div class="draft-review"><div class="draft-review-heading"><div><p class="eyebrow">Náhled importu</p><h2>@preview.Name</h2></div></div>
+                        <p>Termín: <strong>@FormatDeadline(preview.DeadlineUtc)</strong> (@preview.TimeZoneId), UTC: @preview.DeadlineUtc.ToString("u")</p>
+                        <p>@preview.PartyCount stran, @preview.ValidRowCount platných řádků, @preview.InvalidRowCount neplatných řádků, @preview.AllocatedSeatTotal míst.</p>
+                        <p>Rezervováno: @preview.ReservedSeats míst. Zbývá nyní: @preview.RemainingCapacity míst. Po importu: @preview.ProjectedRemainingCapacity míst.</p>
+                        @foreach (var finding in preview.DocumentFindings) { <p class="validation-message">@finding</p> }
+                        @if (preview.IgnoredHeaders.Count > 0) { <p class="validation-message">Ignorované sloupce: @string.Join(", ", preview.IgnoredHeaders)</p> }
+                        @foreach (var row in preview.Rows.Where(x => x.Findings.Count > 0)) { <p class="validation-message">Řádek @row.SourceRowNumber: @string.Join(" ", row.Findings)</p> }
+                        @if (preview.IsValid)
+                        {
+                            <p class="notice">Při potvrzení se znovu ověří termín, zdroj, duplicity a kapacita. Náhled nelze upravovat.</p>
+                            <button @onclick="ConfirmImportAsync" disabled="@isBusy">Potvrdit a importovat</button>
+                        }
+                        else { <p class="notice">Neplatný náhled nelze importovat. Opravte zdrojový soubor a vytvořte nový náhled.</p> }
+                    </div></section>
+                }
+            </Authorized>
+            <NotAuthorized><p>K importu dávek máte přístup pouze pro čtení.</p></NotAuthorized>
+        </AuthorizeView>
 
-        <section class="rsvp-card"><h2>Uložené návrhy</h2>
-            @if (drafts.Count == 0) { <p>Žádné návrhy nečekají na kontrolu.</p> }
-            else { <div class="saved-draft-list">@foreach (var draft in drafts) { <div><button class="button-secondary" @onclick="(() => LoadDraftAsync(draft.Id))">Zkontrolovat</button><span><strong>@draft.Name</strong><br /><small>@CzechPresentationFormatter.BatchState(draft.State), termín @FormatDeadline(draft.DeadlineUtc)</small></span></div> }</div> }
+        <section class="rsvp-card"><h2>Potvrzené dávky</h2>
+            @if (batches.Count == 0) { <p>Žádné potvrzené dávky.</p> }
+            else { <div class="saved-draft-list">@foreach (var batch in batches.Where(x => x.State == InvitationBatchState.Committed)) { <div><strong>@batch.Name</strong><br /><small>termín @FormatDeadline(batch.DeadlineUtc)</small></div> }</div> }
         </section>
-
         <section class="rsvp-card"><h2>Termín potvrzené dávky</h2><AuthorizeView Roles="ElevatedOperator" Context="deadlineAuth"><Authorized><div class="manage-form deadline-change-form"><p>Změna termínu může znovu aktivovat pozvánky s prošlým termínem, na které zatím nebylo odpovězeno. Při potvrzení se znovu ověří kapacita.</p><label>Dávka <InputSelect @bind-Value="deadlineChange.BatchId" @bind-Value:after="SelectDeadlineBatchAsync"><option value="">Vyberte potvrzenou dávku</option>@foreach (var batch in batches.Where(x => x.State == InvitationBatchState.Committed)) { <option value="@batch.Id">@batch.Name</option> }</InputSelect></label>@if (SelectedCommittedBatch is { } selectedBatch) { <p class="deadline-current">Aktuální termín: <strong>@FormatDeadline(selectedBatch.DeadlineUtc)</strong></p> }<label>Nový termín (@dashboard.Configuration?.TimeZoneId) <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="deadlineChange.DeadlineLocal" /></label><label>Důvod <InputText @bind-Value="deadlineChange.Reason" /></label>@if (confirmingDeadline) { <p class="notice">Potvrďte změnu termínu. Aktuální kapacita a verze dávky se znovu ověří.</p><button @onclick="ChangeDeadlineAsync">Potvrdit změnu termínu</button> <button class="button-secondary" @onclick="(() => confirmingDeadline = false)">Zrušit</button> } else { <button @onclick="(() => confirmingDeadline = true)" disabled="@(deadlineChange.BatchId is null)">Změnit termín</button> }</div></Authorized><NotAuthorized><p>Termíny potvrzených dávek mohou měnit pouze uživatelé s rozšířeným oprávněním.</p></NotAuthorized></AuthorizeView></section>
     }
 </main>
-
 @code {
-    private OrganizerDashboard? dashboard; private IReadOnlyList<OrganizerBatch> batches = Array.Empty<OrganizerBatch>(); private IReadOnlyList<OrganizerDraft> drafts = Array.Empty<OrganizerDraft>(); private OrganizerDraftDetail? selectedDraft; private readonly BatchDraftModel draftInput = new(); private readonly DeadlineChangeModel deadlineChange = new(); private IBrowserFile? draftFile; private string? error; private bool confirmingCommit; private bool confirmingDelete; private bool confirmingDeadline;
+    private OrganizerDashboard? dashboard; private IReadOnlyList<OrganizerBatch> batches = Array.Empty<OrganizerBatch>(); private BatchImportPreview? preview; private readonly BatchImportInputModel importInput = new(); private readonly DeadlineChangeModel deadlineChange = new(); private IBrowserFile? sourceFile; private string? error; private bool isBusy; private bool confirmingDeadline;
     protected override async Task OnInitializedAsync() => await RefreshAsync();
-    private async Task RefreshAsync() { dashboard = await OrganizerService.GetDashboardAsync(); batches = await OrganizerService.GetBatchesAsync(); drafts = await OrganizerService.GetDraftsAsync(); }
-    private void SelectDraftFile(InputFileChangeEventArgs args) { draftFile = args.File; error = null; }
-    private void InvalidDraftSubmit() => error = "Zadejte název dávky a termín a potom vyberte soubor CSV.";
-    private async Task SaveDraftAsync() { if (draftFile is null) { error = "Před uložením návrhu vyberte soubor CSV."; return; } try { await using var stream = draftFile.OpenReadStream(1_000_000); using var reader = new StreamReader(stream, new System.Text.UTF8Encoding(false, true), true); selectedDraft = await OrganizerService.SaveDraftAsync(new BatchDraftInput(draftInput.Name, draftInput.DeadlineLocal), await reader.ReadToEndAsync()); error = null; confirmingDelete = false; await RefreshAsync(); } catch (Exception exception) when (exception is IOException or ArgumentException or InvalidOperationException) { error = exception is IOException ? "CSV musí být platné UTF-8 a nesmí být větší než 1 MB." : exception.Message; } }
-    private async Task LoadDraftAsync(Guid id) { selectedDraft = await OrganizerService.GetDraftAsync(id); confirmingCommit = false; confirmingDelete = false; error = selectedDraft is null ? "Tento návrh už není dostupný." : null; }
-    private async Task CommitDraftAsync() { if (selectedDraft is null) return; var id = selectedDraft.Id; try { await OrganizerService.CommitDraftAsync(id, selectedDraft.Version); selectedDraft = null; confirmingCommit = false; error = null; await RefreshAsync(); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; selectedDraft = await OrganizerService.GetDraftAsync(id); confirmingCommit = false; } }
-    private async Task DeleteDraftAsync() { if (selectedDraft is null) return; var id = selectedDraft.Id; try { await OrganizerService.DeleteDraftAsync(id, selectedDraft.Version); selectedDraft = null; confirmingDelete = false; error = null; await RefreshAsync(); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; selectedDraft = await OrganizerService.GetDraftAsync(id); confirmingDelete = false; } }
+    private async Task RefreshAsync() { dashboard = await OrganizerService.GetDashboardAsync(); batches = await OrganizerService.GetBatchesAsync(); }
+    private void ClearPreview() { preview = null; error = null; }
+    private void SelectFile(InputFileChangeEventArgs args) { sourceFile = args.File; ClearPreview(); }
+    private async Task PreviewImportAsync() { if (sourceFile is null) { error = "Před vytvořením náhledu vyberte soubor CSV."; return; } isBusy = true; try { await using var stream = sourceFile.OpenReadStream(CsvImportParser.DefaultMaximumBytes); preview = await BatchImportService.PreviewAsync(new BatchImportInput(importInput.Name, importInput.DeadlineLocal), stream); error = null; } catch (Exception exception) when (exception is IOException or ArgumentException or InvalidOperationException) { error = exception.Message; } finally { isBusy = false; } }
+    private async Task ConfirmImportAsync() { if (preview is null) return; isBusy = true; try { await BatchImportService.ConfirmAsync(preview.PreviewId); preview = null; sourceFile = null; importInput.Name = string.Empty; error = null; await RefreshAsync(); } catch (Exception exception) when (exception is InvalidOperationException or StaleDataException) { error = exception.Message; preview = null; } finally { isBusy = false; } }
     private Task SelectDeadlineBatchAsync() { confirmingDeadline = false; if (SelectedCommittedBatch is { } batch && dashboard?.Configuration is not null) deadlineChange.DeadlineLocal = TimeZoneInfo.ConvertTime(batch.DeadlineUtc, TimeZoneInfo.FindSystemTimeZoneById(dashboard.Configuration.TimeZoneId)).DateTime; return Task.CompletedTask; }
     private async Task ChangeDeadlineAsync() { if (SelectedCommittedBatch is not { } batch) { error = "Vyberte potvrzenou dávku."; return; } try { await OrganizerService.ChangeBatchDeadlineAsync(batch.Id, batch.Version, deadlineChange.DeadlineLocal, deadlineChange.Reason); confirmingDeadline = false; error = null; await RefreshAsync(); } catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or StaleDataException) { error = exception.Message; confirmingDeadline = false; await RefreshAsync(); } }
     private string FormatDeadline(DateTimeOffset deadline) { if (dashboard?.Configuration is null) return deadline.ToString("u", CzechPresentationFormatter.Culture); var zone = TimeZoneInfo.FindSystemTimeZoneById(dashboard.Configuration.TimeZoneId); return CzechPresentationFormatter.FormatOrganizerDeadline(deadline, zone); }
     private OrganizerBatch? SelectedCommittedBatch => deadlineChange.BatchId is null ? null : batches.SingleOrDefault(x => x.Id == deadlineChange.BatchId && x.State == InvitationBatchState.Committed);
-    private sealed class BatchDraftModel { [Required] public string Name { get; set; } = string.Empty; public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); }
+    private sealed class BatchImportInputModel { [Required] public string Name { get; set; } = string.Empty; public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); }
     private sealed class DeadlineChangeModel { public Guid? BatchId { get; set; } public DateTime DeadlineLocal { get; set; } = DateTime.Today.AddDays(14).AddHours(18); public string Reason { get; set; } = string.Empty; }
 }

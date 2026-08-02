@@ -13,6 +13,5 @@ public sealed class InvitationBatch
     public DateTimeOffset? CommittedAtUtc { get; set; }
     public string? CommittedBy { get; set; }
     public string? SourceDigest { get; set; }
-    public string? ValidationIssue { get; set; }
     public uint Version { get; set; }
 }

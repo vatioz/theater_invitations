@@ -45,6 +45,8 @@ builder.Services.AddSingleton<IClock, TheaterInvitations.Web.Services.SystemCloc
 builder.Services.AddScoped<RsvpService>();
 builder.Services.AddScoped<RsvpInvitationService>();
 builder.Services.AddScoped<OrganizerService>();
+builder.Services.AddScoped<BatchImportPreviewStore>();
+builder.Services.AddScoped<BatchImportService>();
 builder.Services.AddScoped<EmailCampaignService>();
 builder.Services.AddScoped<OrganizerUserService>();
 builder.Services.AddSingleton<EmailTemplateRenderer>();

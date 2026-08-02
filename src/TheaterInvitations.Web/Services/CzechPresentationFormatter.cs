@@ -31,8 +31,6 @@ public static class CzechPresentationFormatter
 
     public static string BatchState(InvitationBatchState value) => value switch
     {
-        InvitationBatchState.Draft => "Návrh",
-        InvitationBatchState.Prepared => "Připraveno",
         InvitationBatchState.Committed => "Potvrzeno",
         _ => value.ToString()
     };

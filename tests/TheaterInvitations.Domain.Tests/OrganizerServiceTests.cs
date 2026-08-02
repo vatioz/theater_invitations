@@ -233,54 +233,41 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
-    public async Task Saving_a_valid_draft_persists_rows_without_creating_live_parties()
+    public async Task Preview_writes_no_import_records_and_confirmation_commits_all_data()
     {
         await using var db = CreateDb();
         await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
+        var service = CreateImportService(db);
+        var csv = "primary_guest_name,email,allocated_seats,priority,phone\nAlex Guest,alex@example.test,2,1,+420 777 123";
 
-        var draft = await service.SaveDraftAsync(new BatchDraftInput("First wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,2");
+        var preview = await service.PreviewAsync(new BatchImportInput("First wave", new DateTime(2026, 7, 26, 18, 0, 0)), new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv)));
 
-        Assert.Equal(InvitationBatchState.Prepared, draft.State);
-        Assert.Single(draft.Rows);
-        Assert.Empty(db.InvitationParties);
-        Assert.Single(db.InvitationDraftRows);
-        Assert.Equal("BatchDraftSaved", (await db.AuditEvents.SingleAsync()).EventType);
-    }
-
-    [Fact]
-    public async Task Operator_can_delete_an_uncommitted_draft_and_its_rows()
-    {
-        await using var db = CreateDb();
-        await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
-        var draft = await service.SaveDraftAsync(new BatchDraftInput("Disposable wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,1");
-
-        await service.DeleteDraftAsync(draft.Id, draft.Version);
-
+        Assert.True(preview.IsValid);
         Assert.Empty(db.InvitationBatches);
-        Assert.Empty(db.InvitationDraftRows);
-        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchDraftDeleted" && x.Outcome == "Accepted");
+        Assert.Empty(db.InvitationParties);
+        Assert.Empty(db.AuditEvents);
+        await service.ConfirmAsync(preview.PreviewId);
+
+        var party = await db.InvitationParties.SingleAsync();
+        Assert.Equal(1, party.Priority);
+        Assert.Equal("+420 777 123", party.Phone);
+        Assert.Single(await db.RsvpTokens.ToListAsync());
+        Assert.Equal(InvitationBatchState.Committed, (await db.InvitationBatches.SingleAsync()).State);
     }
 
     [Fact]
-    public async Task Committing_a_prepared_draft_creates_party_token_with_raw_send_material()
+    public async Task Invalid_preview_cannot_be_confirmed_and_is_not_persisted()
     {
         await using var db = CreateDb();
         await SeedConfigurationAsync(db, 10);
-        var service = CreateService(db);
-        var draft = await service.SaveDraftAsync(new BatchDraftInput("First wave", new DateTime(2026, 7, 26, 18, 0, 0)), "primary_guest_name,email,company,allocated_seats\nAlex Guest,alex@example.test,,2");
+        var service = CreateImportService(db);
 
-        await service.CommitDraftAsync(draft.Id, draft.Version);
+        var preview = await service.PreviewAsync(new BatchImportInput("Invalid wave", new DateTime(2026, 7, 26, 18, 0, 0)), new MemoryStream(System.Text.Encoding.UTF8.GetBytes("primary_guest_name,email,allocated_seats\n,not-an-email,0")));
 
-        var batch = await db.InvitationBatches.SingleAsync();
-        Assert.Equal(InvitationBatchState.Committed, batch.State);
-        var party = await db.InvitationParties.SingleAsync();
-        var token = await db.RsvpTokens.SingleAsync();
-        Assert.Equal(party.Id, token.PartyId);
-        Assert.Equal(party.TokenHash, token.Hash);
-        Assert.NotNull(token.RawToken);
-        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchCommitted" && x.Outcome == "Accepted");
+        Assert.False(preview.IsValid);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ConfirmAsync(preview.PreviewId));
+        Assert.Empty(db.InvitationBatches);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "BatchImported" && x.Outcome == "Rejected");
     }
 
     [Fact]
@@ -464,6 +451,7 @@ public sealed class OrganizerServiceTests
         .Options);
 
     private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
+    private static BatchImportService CreateImportService(InvitationDbContext db, IOrganizerAuthorization? authorization = null) => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new BatchImportPreviewStore());
     private static EmailCampaignService CreateEmailService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new AllowedAuthorization(), new FixedClock(), new TransactionRetry(), new EmailTemplateRenderer(), new AcceptedEmailProvider(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["PublicApp:BaseUrl"] = "https://rsvp.example.org" }).Build());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
