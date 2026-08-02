@@ -14,6 +14,8 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
     public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
     public DbSet<EmailCampaign> EmailCampaigns => Set<EmailCampaign>();
     public DbSet<EmailDispatch> EmailDispatches => Set<EmailDispatch>();
+    public DbSet<EmailCampaignSkip> EmailCampaignSkips => Set<EmailCampaignSkip>();
+    public DbSet<EmailSuppression> EmailSuppressions => Set<EmailSuppression>();
     public DbSet<EmailDailyAllowance> EmailDailyAllowances => Set<EmailDailyAllowance>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
@@ -105,9 +107,28 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
             entity.Property(x => x.ReviewFingerprint).HasMaxLength(128).IsRequired();
             entity.Property(x => x.InvalidationReasonCategory).HasMaxLength(100);
+            entity.Property(x => x.SourceCampaignId);
             entity.Property(x => x.Version).IsRowVersion();
             entity.HasOne<InvitationBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<EmailTemplate>().WithMany().HasForeignKey(x => x.TemplateId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<EmailCampaign>().WithMany().HasForeignKey(x => x.SourceCampaignId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<EmailCampaignSkip>(entity =>
+        {
+            entity.Property(x => x.ReasonCategory).HasMaxLength(100).IsRequired();
+            entity.HasIndex(x => new { x.CampaignId, x.PartyId, x.ReasonCategory }).IsUnique();
+            entity.HasOne<EmailCampaign>().WithMany().HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<InvitationParty>().WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<EmailSuppression>(entity =>
+        {
+            entity.Property(x => x.NormalizedEmail).HasMaxLength(320).IsRequired();
+            entity.Property(x => x.ReasonCategory).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.CreatedBy).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Version).IsRowVersion();
+            entity.HasIndex(x => x.NormalizedEmail).IsUnique();
         });
 
         modelBuilder.Entity<EmailDispatch>(entity =>

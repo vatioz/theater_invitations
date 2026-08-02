@@ -460,6 +460,55 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Selected_resend_uses_current_party_data_and_records_ineligible_recipients()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Resend batch", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var eligible = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Original Name", Email = "original@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("resend-eligible") };
+        var ineligible = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Expired Guest", Email = "expired@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("resend-ineligible") };
+        var eligibleToken = new RsvpToken { PartyId = eligible.Id, Hash = eligible.TokenHash, RawToken = "resend-eligible", IssuedAtUtc = DateTimeOffset.UtcNow };
+        var ineligibleToken = new RsvpToken { PartyId = ineligible.Id, Hash = ineligible.TokenHash, RawToken = "resend-ineligible", IssuedAtUtc = DateTimeOffset.UtcNow };
+        var template = new EmailTemplate { Type = EmailTemplateType.InitialInvitation, VersionNumber = 1, Name = "Company resend", Subject = "Invitation", HtmlBody = "<p>Hello</p>", PlainTextBody = "Hello", State = EmailTemplateState.Active, ContentDigest = "resend-digest", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" };
+        var source = new EmailCampaign { Type = EmailCampaignType.InitialInvitation, State = EmailCampaignState.Completed, BatchId = batch.Id, TemplateId = template.Id, TemplateVersionNumber = 1, TemplateDigest = template.ContentDigest, FromDisplayName = "Theater", FromAddress = "events@theater.org", ReplyToAddress = "support@theater.org", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test", ReviewFingerprint = "source-fingerprint" };
+        var eligibleDispatch = new EmailDispatch { CampaignId = source.Id, PartyId = eligible.Id, TokenId = eligibleToken.Id, RecipientEmail = eligible.Email, RecipientName = eligible.PrimaryGuestName, AllocatedSeats = 1, DeadlineUtc = batch.DeadlineUtc, IdempotencyKey = "initial/source/eligible", State = EmailDispatchState.Accepted, AcceptedAtUtc = DateTimeOffset.UtcNow };
+        var ineligibleDispatch = new EmailDispatch { CampaignId = source.Id, PartyId = ineligible.Id, TokenId = ineligibleToken.Id, RecipientEmail = ineligible.Email, RecipientName = ineligible.PrimaryGuestName, AllocatedSeats = 1, DeadlineUtc = batch.DeadlineUtc, IdempotencyKey = "initial/source/ineligible", State = EmailDispatchState.Accepted, AcceptedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(batch, eligible, ineligible, eligibleToken, ineligibleToken, template, source, eligibleDispatch, ineligibleDispatch);
+        await db.SaveChangesAsync();
+        eligible.OverrideStatus(InvitationStatus.Confirmed, DateTimeOffset.UtcNow);
+        ineligible.OverrideStatus(InvitationStatus.Expired, DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("Theater", "events@theater.org", "support@theater.org", 500, true), null);
+
+        eligible.PrimaryGuestName = "Updated Name";
+        eligible.Email = "updated@example.test";
+        await db.SaveChangesAsync();
+
+        var resend = await service.PrepareSelectedResendCampaignAsync(source.Id, new[] { eligibleDispatch.Id, ineligibleDispatch.Id });
+
+        Assert.Equal(1, resend.RecipientCount);
+        var created = await db.EmailCampaigns.SingleAsync(x => x.Id == resend.Id);
+        Assert.Equal(source.Id, created.SourceCampaignId);
+        var newDispatch = Assert.Single(await db.EmailDispatches.Where(x => x.CampaignId == resend.Id).ToListAsync());
+        Assert.Equal(eligible.Email, newDispatch.RecipientEmail);
+        Assert.Equal(eligible.PrimaryGuestName, newDispatch.RecipientName);
+        Assert.NotEqual(eligibleDispatch.IdempotencyKey, newDispatch.IdempotencyKey);
+        var skip = Assert.Single(await db.EmailCampaignSkips.Where(x => x.CampaignId == resend.Id).ToListAsync());
+        Assert.Equal(ineligible.Id, skip.PartyId);
+        Assert.Equal("status-ineligible", skip.ReasonCategory);
+        Assert.Equal(EmailDispatchState.Accepted, (await db.EmailDispatches.SingleAsync(x => x.Id == eligibleDispatch.Id)).State);
+        await service.SendCampaignAsync(resend.Id, (await service.GetCampaignAsync(resend.Id))!.Version);
+        Assert.Equal(EmailDispatchState.Accepted, (await db.EmailDispatches.SingleAsync(x => x.CampaignId == resend.Id)).State);
+
+        db.EmailSuppressions.Add(new EmailSuppression { NormalizedEmail = eligible.Email, ReasonCategory = "manual", CreatedAtUtc = DateTimeOffset.UtcNow, CreatedBy = "Test" });
+        await db.SaveChangesAsync();
+        var suppressedResend = await service.PrepareSelectedResendCampaignAsync(source.Id, new[] { eligibleDispatch.Id });
+        Assert.Equal(0, suppressedResend.RecipientCount);
+        Assert.Equal("suppressed", (await db.EmailCampaignSkips.SingleAsync(x => x.CampaignId == suppressedResend.Id)).ReasonCategory);
+    }
+
+    [Fact]
     public async Task Template_rejects_unknown_placeholder()
     {
         await using var db = CreateDb();
