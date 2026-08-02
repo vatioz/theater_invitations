@@ -9,7 +9,6 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
     public DbSet<EventConfiguration> EventConfigurations => Set<EventConfiguration>();
     public DbSet<InvitationBatch> InvitationBatches => Set<InvitationBatch>();
     public DbSet<InvitationParty> InvitationParties => Set<InvitationParty>();
-    public DbSet<InvitationDraftRow> InvitationDraftRows => Set<InvitationDraftRow>();
     public DbSet<RsvpToken> RsvpTokens => Set<RsvpToken>();
     public DbSet<EmailSenderConfiguration> EmailSenderConfigurations => Set<EmailSenderConfiguration>();
     public DbSet<EmailTemplate> EmailTemplates => Set<EmailTemplate>();
@@ -39,7 +38,6 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.Property(x => x.ModifiedBy).HasMaxLength(200);
             entity.Property(x => x.CommittedBy).HasMaxLength(200);
             entity.Property(x => x.SourceDigest).HasMaxLength(128);
-            entity.Property(x => x.ValidationIssue).HasMaxLength(2000);
             entity.Property(x => x.Version).IsRowVersion();
         });
 
@@ -56,17 +54,6 @@ public sealed class InvitationDbContext(DbContextOptions<InvitationDbContext> op
             entity.HasIndex(x => x.TokenHash).IsUnique();
             entity.ToTable(table => table.HasCheckConstraint("CK_InvitationParties_AllocatedSeats", "\"AllocatedSeats\" > 0"));
             entity.ToTable(table => table.HasCheckConstraint("CK_InvitationParties_Priority", "\"Priority\" BETWEEN 1 AND 3"));
-        });
-
-        modelBuilder.Entity<InvitationDraftRow>(entity =>
-        {
-            entity.Property(x => x.PrimaryGuestName).HasMaxLength(200);
-            entity.Property(x => x.Email).HasMaxLength(320);
-            entity.Property(x => x.Company).HasMaxLength(200);
-            entity.Property(x => x.Phone).HasMaxLength(64);
-            entity.Property(x => x.ValidationIssue).HasMaxLength(500);
-            entity.HasIndex(x => new { x.BatchId, x.SourceRowNumber }).IsUnique();
-            entity.HasOne<InvitationBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RsvpToken>(entity =>
