@@ -5,6 +5,6 @@
 **/obj
 .env
 .env.*
-manual-test-*.csv
+manual-tests
 README.md
 spec

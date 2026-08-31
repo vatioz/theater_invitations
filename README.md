@@ -69,13 +69,6 @@ Open the application at `http://localhost:8080`. The local development RSVP link
 http://localhost:8080/rsvp/development-rsvp-token
 ```
 
-The Development login endpoints are available at:
-
-```text
-http://localhost:8080/dev/login/Operator
-http://localhost:8080/dev/login/ElevatedOperator
-```
-
 To stop and remove the PostgreSQL container later:
 
 ```powershell
@@ -127,6 +120,14 @@ That produces:
 
 Pushes to `main` also publish `latest`. Use the semantic version tag when configuring App Service for a release and keep the SHA tag for exact rollback traceability. Do not use `latest` as the production deployment reference.
 
-## Development Organizer Access
+## Organizer Access
 
 Organizer authentication uses the application login at `/account/login` in every environment. The first production elevated account is created from the temporary `BootstrapAdmin__Email` and `BootstrapAdmin__Password` settings. Remove those settings after the first successful account creation.
+
+## Manual Test Data
+
+Sample CSV files for exercising the organizer import flow by hand live in [`manual-tests/`](manual-tests/README.md). They contain synthetic guests only.
+
+## License
+
+Released under the [MIT License](LICENSE).

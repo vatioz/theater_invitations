@@ -12,4 +12,4 @@ node_modules/
 *.log
 **/bin/
 **/obj/
-manual-test-resend.csv
+manual-tests/resend.csv
