@@ -13,5 +13,6 @@ node_modules/
 **/bin/
 **/obj/
 manual-tests/resend.csv
+manual-test-resend.csv
 
 batches/
