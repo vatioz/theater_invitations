@@ -9,6 +9,21 @@ public sealed class CsvImportParser
 {
     public const int DefaultMaximumBytes = 1_000_000;
     private static readonly string[] RecognizedHeaders = ["primary_guest_name", "email", "allocated_seats", "company", "priority", "phone"];
+    private static readonly IReadOnlyDictionary<string, string> HeaderMappings = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["primary_guest_name"] = "primary_guest_name",
+        ["email"] = "email",
+        ["allocated_seats"] = "allocated_seats",
+        ["company"] = "company",
+        ["priority"] = "priority",
+        ["phone"] = "phone",
+        ["jméno a příjmení"] = "primary_guest_name",
+        ["e-mail"] = "email",
+        ["telefon"] = "phone",
+        ["priorita"] = "priority",
+        ["doprovod"] = "allocated_seats",
+        ["společnost"] = "company"
+    };
 
     public CsvImportDocument Parse(Stream input, int maximumBytes = DefaultMaximumBytes)
     {
@@ -46,8 +61,8 @@ public sealed class CsvImportParser
         for (var index = 0; index < header.Length; index++)
         {
             var name = header[index];
-            if (!RecognizedHeaders.Contains(name, StringComparer.Ordinal)) { ignored.Add(name); continue; }
-            if (!indexes.TryAdd(name, index)) documentFindings.Add($"Duplicitní sloupec: {name}.");
+            if (!HeaderMappings.TryGetValue(name, out var canonicalName)) { ignored.Add(name); continue; }
+            if (!indexes.TryAdd(canonicalName, index)) documentFindings.Add($"Duplicitní sloupec: {name}.");
         }
         foreach (var required in new[] { "primary_guest_name", "email", "allocated_seats" })
             if (!indexes.ContainsKey(required)) documentFindings.Add($"Chybí povinný sloupec: {required}.");

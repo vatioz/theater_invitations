@@ -86,6 +86,8 @@ Columns are matched by name and may appear in any order.
 
 Unknown headers are ignored rather than rejected. Preview must prominently list them so misspellings or unexpected data loss are visible. A missing required header is always an error.
 
+The importer also accepts the current Czech source export aliases at the boundary: `jméno a příjmení` maps to `primary_guest_name`, `e-mail` to `email`, `telefon` to `phone`, `priorita` to `priority`, `doprovod` to `allocated_seats`, and `společnost` to `company`. The source `doprovod` value is the total number of seats allocated to the party. Source-only `kdo pozval` and `pozice` columns remain ignored and are shown in the preview. The canonical fields remain the internal contract.
+
 Phone is restricted personal data stored for a possible future communication need. This change does not add calls, SMS, consent handling, templates, providers, or automated phone use. Its purpose and retention must be revisited before any operational use. Authorized organizers may correct phone and priority with audit and concurrency protection.
 
 ## Campaign And Template Workflow

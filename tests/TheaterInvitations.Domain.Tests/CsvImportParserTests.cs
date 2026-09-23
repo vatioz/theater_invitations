@@ -20,6 +20,22 @@ public sealed class CsvImportParserTests
     }
 
     [Fact]
+    public void Parses_the_current_czech_export_headers()
+    {
+        var document = Parse("jméno a příjmení,e-mail,telefon,priorita,kdo pozval,doprovod,společnost,pozice\nMichal Geher,michal.geher@gehergeo.cz,724 301 700,1,GEHER GEO s.r.o.,2,,");
+
+        var row = Assert.Single(document.Rows);
+        Assert.True(document.IsValid);
+        Assert.Equal("Michal Geher", row.Name);
+        Assert.Equal("michal.geher@gehergeo.cz", row.Email);
+        Assert.Equal(2, row.AllocatedSeats);
+        Assert.Equal(1, row.Priority);
+        Assert.Equal("724 301 700", row.Phone);
+        Assert.Contains("kdo pozval", document.IgnoredHeaders);
+        Assert.Contains("pozice", document.IgnoredHeaders);
+    }
+
+    [Fact]
     public void Reports_all_row_findings_and_duplicate_headers()
     {
         var document = Parse("primary_guest_name,email,email,allocated_seats,priority,phone\n,not-email,other,0,4,\"bad\u0001phone\"");
