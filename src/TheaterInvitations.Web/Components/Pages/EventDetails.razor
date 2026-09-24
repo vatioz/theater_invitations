@@ -8,7 +8,6 @@
     }
     <dl>
         <div><dt>Datum</dt><dd><time datetime="@LocalStart.ToString("yyyy-MM-dd")">@CzechPresentationFormatter.FormatPublicDate(Invitation.StartsAtUtc, TimeZone)</time></dd></div>
-        <div><dt>Otevření</dt><dd><time datetime="@Invitation.DoorsAtUtc.ToString("O")">@CzechPresentationFormatter.FormatPublicTime(Invitation.DoorsAtUtc, TimeZone)</time></dd></div>
         <div><dt>Začátek</dt><dd><time datetime="@Invitation.StartsAtUtc.ToString("O")">@CzechPresentationFormatter.FormatPublicTime(Invitation.StartsAtUtc, TimeZone)</time></dd></div>
         <div><dt>Místo</dt><dd>@Invitation.VenueName</dd></div>
         <div><dt>Adresa</dt><dd class="event-address">@Invitation.VenueAddress</dd></div>
