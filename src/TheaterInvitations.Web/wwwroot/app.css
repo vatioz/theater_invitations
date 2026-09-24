@@ -61,6 +61,190 @@ textarea { width: 100%; min-height: 7rem; resize: vertical; }
 button { width: fit-content; padding: .8rem 1.2rem; border: 0; background: #a74420; color: white; cursor: pointer; font: inherit; }
 .validation-message { color: #922b15; font-weight: bold; }
 
+.confirmation-ticket {
+    --ticket-aqua: #49b8bd;
+    width: min(100%, 72rem);
+    min-height: min(40rem, calc(100vh - 4rem));
+    overflow: hidden;
+    background-color: #050707;
+    background-image: linear-gradient(90deg, rgb(0 0 0 / 32%), rgb(0 0 0 / 6%)), url("vstupenka_vanocniMIR_podklad.png");
+    background-position: center;
+    background-size: cover;
+    color: #fff;
+    box-shadow: 0 1.8rem 5rem rgb(10 28 30 / 28%);
+}
+.ticket-main {
+    display: flex;
+    min-height: inherit;
+    min-width: 0;
+    padding: clamp(2rem, 5vw, 4.5rem);
+}
+.ticket-copy {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: end;
+    min-width: 0;
+}
+.ticket-kicker {
+    margin: 0 0 .75rem;
+    color: var(--ticket-aqua);
+    font: 700 .75rem/1.2 Arial, sans-serif;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+}
+.confirmation-ticket h1 {
+    max-width: 48rem;
+    margin: 0;
+    font: 800 clamp(2.7rem, 7vw, 6.2rem)/.86 Arial, sans-serif;
+    letter-spacing: -.06em;
+    overflow-wrap: anywhere;
+    text-transform: uppercase;
+}
+.confirmation-ticket h1 span {
+    display: block;
+    color: #fff;
+}
+.confirmation-ticket h1 { color: var(--ticket-aqua); }
+.ticket-status {
+    margin: 1.25rem 0 0;
+    color: #f3f7f7;
+    font: clamp(1rem, 2.2vw, 1.4rem)/1.35 Arial, sans-serif;
+}
+.ticket-event {
+    margin: clamp(2rem, 6vh, 4rem) 0 0;
+    color: var(--ticket-aqua);
+    font: 800 clamp(1.5rem, 3vw, 2.6rem)/1 Arial, sans-serif;
+    letter-spacing: -.02em;
+    text-transform: uppercase;
+}
+.ticket-seats {
+    margin: clamp(2rem, 6vh, 4rem) 0 0;
+    color: #d9e5e5;
+    font: 1rem/1.5 Arial, sans-serif;
+}
+.confirmation-ticket .event-details {
+    margin: 1.4rem 0 0;
+    padding-top: 1.15rem;
+    border-color: rgb(255 255 255 / 35%);
+}
+.confirmation-ticket .event-details .eyebrow,
+.confirmation-ticket .event-details h2 { display: none; }
+.confirmation-ticket .event-details dl {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1rem;
+}
+.confirmation-ticket .event-details dl > div {
+    display: block;
+    min-width: 0;
+}
+.confirmation-ticket .event-details dt {
+    margin-bottom: .35rem;
+    color: #fff;
+    font-size: .68rem;
+    letter-spacing: .1em;
+}
+.confirmation-ticket .event-details dd {
+    color: #f8ffff;
+    font: 700 .82rem/1.3 Arial, sans-serif;
+}
+.ticket-edit {
+    margin-top: 1.5rem;
+    padding: .65rem 0;
+    border-bottom: 1px solid var(--ticket-aqua);
+    background: transparent;
+    color: var(--ticket-aqua);
+    font: 700 .78rem Arial, sans-serif;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+.ticket-edit:hover { color: #fff; border-color: #fff; }
+.rsvp-page > .rsvp-card {
+    position: relative;
+    width: min(100%, 72rem);
+    min-height: min(40rem, calc(100vh - 4rem));
+    padding: clamp(2rem, 6vw, 5rem);
+    overflow: hidden;
+    border: 0;
+    background-color: #050707;
+    background-image: linear-gradient(90deg, rgb(0 0 0 / 32%), rgb(0 0 0 / 6%)), url("vstupenka_vanocniMIR_podklad.png");
+    background-position: center;
+    background-size: cover;
+    color: #f8ffff;
+    box-shadow: 0 1.8rem 5rem rgb(10 28 30 / 28%);
+}
+.rsvp-page > .rsvp-card h1 {
+    max-width: 48rem;
+    margin: .35rem 0 1.5rem;
+    color: #fff;
+    font: 800 clamp(2.7rem, 7vw, 5.8rem)/.9 Arial, sans-serif;
+    letter-spacing: -.055em;
+    overflow-wrap: anywhere;
+    text-transform: uppercase;
+}
+.rsvp-page > .rsvp-card .guest-heading {
+    margin: -.5rem 0 1.5rem;
+    color: #49b8bd;
+    font: 800 clamp(1.7rem, 4vw, 3rem)/1 Arial, sans-serif;
+    letter-spacing: -.025em;
+    text-transform: uppercase;
+}
+.rsvp-page > .rsvp-card .eyebrow { color: #49b8bd; }
+.rsvp-page > .rsvp-card > p:not(.eyebrow):not(.notice):not(.deadline):not(.validation-message) {
+    max-width: 46rem;
+    color: #dce8e8;
+    font: 1rem/1.55 Arial, sans-serif;
+}
+.rsvp-page > .rsvp-card a { color: #77dbe0; }
+.rsvp-page > .rsvp-card .notice,
+.rsvp-page > .rsvp-card .deadline {
+    max-width: 46rem;
+    border-left: 3px solid #49b8bd;
+    background: rgb(73 184 189 / 13%);
+    color: #edfafa;
+    font-family: Arial, sans-serif;
+}
+.rsvp-page > .rsvp-card .event-details {
+    max-width: 55rem;
+    border-color: rgb(255 255 255 / 30%);
+}
+.rsvp-page > .rsvp-card .event-details h2 { color: #49b8bd; }
+.rsvp-page > .rsvp-card .event-details dl { grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); }
+.rsvp-page > .rsvp-card .event-details dl > div { display: block; }
+.rsvp-page > .rsvp-card .event-details dt { margin-bottom: .35rem; color: #9bd8db; }
+.rsvp-page > .rsvp-card .event-details dd { color: #fff; font-family: Arial, sans-serif; }
+.rsvp-page > .rsvp-card fieldset { max-width: 46rem; }
+.rsvp-page > .rsvp-card legend { color: #fff; font-family: Arial, sans-serif; }
+.rsvp-page > .rsvp-card button { background: #49b8bd; color: #041112; font-family: Arial, sans-serif; font-weight: 700; }
+.rsvp-page > .rsvp-card button:hover { background: #72d2d6; }
+.rsvp-page > .rsvp-card .button-secondary {
+    border-color: #6bb9bd;
+    background: transparent;
+    color: #d9f6f7;
+}
+.rsvp-page > .rsvp-card .button-secondary:hover { background: rgb(73 184 189 / 18%); }
+.rsvp-page > .rsvp-card .accessibility-toggle {
+    background: transparent;
+    color: #8edbde;
+}
+.rsvp-page > .rsvp-card .accessibility-request {
+    border-color: rgb(73 184 189 / 55%);
+    background: rgb(73 184 189 / 10%);
+}
+.rsvp-page > .rsvp-card .accessibility-request p { color: #c5d7d7; }
+.rsvp-page > .rsvp-card textarea {
+    padding: .75rem;
+    border: 1px solid #6bb9bd;
+    background: #f8ffff;
+    color: #071112;
+    font: 1rem/1.4 Arial, sans-serif;
+}
+.rsvp-page > .rsvp-card .decline-confirmation {
+    border-color: #49b8bd;
+    background: rgb(73 184 189 / 12%);
+}
+.rsvp-page > .rsvp-card .validation-message { color: #ffb59c; }
+
 .login-page {
     display: grid;
     min-height: 100vh;
@@ -261,6 +445,19 @@ th { color: #58656a; font-size: .75rem; letter-spacing: .05em; text-transform: u
 .campaign-section table input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: #a74420; }
 
 @media (max-width: 760px) {
+    .rsvp-page { padding: 0; }
+    .rsvp-page > .rsvp-card {
+        min-height: 100vh;
+        padding: 2rem 1.5rem;
+    }
+    .rsvp-page > .rsvp-card h1 { font-size: clamp(2.5rem, 13vw, 4.5rem); }
+    .rsvp-page > .rsvp-card .event-details dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .confirmation-ticket { min-height: 100vh; }
+    .ticket-main { min-height: 100vh; padding: 2rem 1.5rem; }
+    .confirmation-ticket h1 { font-size: clamp(2.7rem, 14vw, 4.8rem); }
+    .ticket-event { margin-top: 2rem; }
+    .confirmation-ticket .event-details dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .confirmation-ticket .event-details dl > div:last-child { grid-column: 1 / -1; }
     .login-card { grid-template-columns: 1fr; min-height: auto; }
     .login-intro { min-height: 22rem; }
     .login-caption { margin-top: 2rem; }

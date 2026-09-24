@@ -28,13 +28,21 @@ public static class DevelopmentDataSeeder
         }
 
         var tokenHash = RsvpService.HashToken(TestRsvpToken);
-        if (await db.InvitationParties.AnyAsync(x => x.TokenHash == tokenHash, cancellationToken))
+        var nowUtc = DateTimeOffset.UtcNow;
+        var existingParty = await db.InvitationParties
+            .SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
+        if (existingParty is not null)
         {
+            var existingBatch = await db.InvitationBatches.SingleAsync(x => x.Id == existingParty.BatchId, cancellationToken);
+            if (existingBatch.DeadlineUtc <= nowUtc)
+            {
+                existingBatch.DeadlineUtc = nowUtc.AddDays(7);
+            }
+
             await db.SaveChangesAsync(cancellationToken);
             return;
         }
 
-        var nowUtc = DateTimeOffset.UtcNow;
         var batch = new InvitationBatch
         {
             Name = "Ukázková testovací dávka",

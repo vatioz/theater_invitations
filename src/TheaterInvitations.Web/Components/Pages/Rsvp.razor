@@ -30,16 +30,27 @@
     }
     else if (submitted || (invitation.HasRecordedResponse && (!editing || !invitation.CanRespond)))
     {
-        <section class="rsvp-card" aria-labelledby="recorded-heading">
-            <p class="eyebrow">Odpověď zaznamenána</p>
-            <h1 id="recorded-heading">Děkujeme, @invitation.PrimaryGuestName</h1>
-            <p>@StatusMessage()</p>
-            <p>Pozvání zahrnuje @SeatDescription(invitation.AllocatedSeats).</p>
-            @if (invitation.HasEventDetails) { <EventDetails Invitation="invitation" /> }
-            @if (!submitted && invitation.CanRespond)
-            {
-                <button type="button" @onclick="BeginEditing">Upravit odpověď</button>
-            }
+        <section class="confirmation-ticket" aria-labelledby="recorded-heading">
+            <div class="ticket-main">
+                <div class="ticket-copy">
+                    <p class="ticket-kicker">Odpověď zaznamenána</p>
+                    <h1 id="recorded-heading"><span>Děkujeme,</span> @invitation.PrimaryGuestName</h1>
+                    <p class="ticket-status">@StatusMessage()</p>
+                    @if (invitation.HasEventDetails)
+                    {
+                        <p class="ticket-event">@invitation.EventName</p>
+                        <EventDetails Invitation="invitation" ShowEventName="false" />
+                    }
+                    else
+                    {
+                        <p class="ticket-seats">Pozvání zahrnuje @SeatDescription(invitation.AllocatedSeats).</p>
+                    }
+                    @if (!submitted && invitation.CanRespond)
+                    {
+                        <button class="ticket-edit" type="button" @onclick="BeginEditing">Upravit odpověď</button>
+                    }
+                </div>
+            </div>
         </section>
     }
     else
