@@ -377,6 +377,89 @@ public sealed class OrganizerServiceTests
     }
 
     [Fact]
+    public async Task Template_update_preserves_identity_updates_content_and_records_audit()
+    {
+        await using var db = CreateDb();
+        var service = CreateEmailService(db);
+        await service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Original", "Theater", "Original subject", "<p>Original</p>", "Original"));
+        var original = Assert.Single(await service.GetTemplatesAsync());
+        var storedOriginal = await db.EmailTemplates.SingleAsync();
+        var createdAt = storedOriginal.CreatedAtUtc;
+        var originalDigest = storedOriginal.ContentDigest;
+
+        await service.UpdateTemplateAsync(original.Id, original.Version, new EmailTemplateInput(EmailTemplateType.Reminder, "Updated", "New sender", "Updated subject", "<p>Updated</p>", "Updated"));
+
+        db.ChangeTracker.Clear();
+        var updated = await db.EmailTemplates.SingleAsync();
+        Assert.Equal(original.Id, updated.Id);
+        Assert.Equal(createdAt, updated.CreatedAtUtc);
+        Assert.Equal("Development Operator", updated.CreatedBy);
+        Assert.Equal(EmailTemplateType.Reminder, updated.Type);
+        Assert.Equal("Updated", updated.Name);
+        Assert.Equal("New sender", updated.FromDisplayName);
+        Assert.Equal("Updated subject", updated.Subject);
+        Assert.Equal("<p>Updated</p>", updated.HtmlBody);
+        Assert.Equal("Updated", updated.PlainTextBody);
+        Assert.NotEqual(originalDigest, updated.ContentDigest);
+        Assert.Contains(await db.AuditEvents.ToListAsync(), x => x.EventType == "EmailTemplateUpdated" && x.Outcome == "Accepted" && x.ActorIdentifier == "Development Operator");
+        var detail = await service.GetTemplateAsync(updated.Id);
+        Assert.NotNull(detail);
+        Assert.Equal(updated.HtmlBody, detail.HtmlBody);
+    }
+
+    [Fact]
+    public async Task Template_update_requires_authorization_and_current_version()
+    {
+        await using var db = CreateDb();
+        var allowed = CreateEmailService(db);
+        await allowed.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Original", "Theater", "Subject", "<p>Body</p>", "Body"));
+        var template = Assert.Single(await allowed.GetTemplatesAsync());
+        var input = new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Updated", "Theater", "Subject", "<p>Body</p>", "Body");
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => CreateEmailService(db, new DeniedAuthorization()).UpdateTemplateAsync(template.Id, template.Version, input));
+        await Assert.ThrowsAsync<StaleDataException>(() => allowed.UpdateTemplateAsync(template.Id, template.Version + 1, input));
+        var missing = await Assert.ThrowsAsync<InvalidOperationException>(() => allowed.UpdateTemplateAsync(Guid.NewGuid(), 0, input));
+        Assert.Equal("E-mailová šablona nebyla nalezena.", missing.Message);
+    }
+
+    [Fact]
+    public async Task Template_update_reuses_creation_validation_without_changing_stored_content()
+    {
+        await using var db = CreateDb();
+        var service = CreateEmailService(db);
+        await service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Original", "Theater", "Subject", "<p>Body</p>", "Body"));
+        var template = Assert.Single(await service.GetTemplatesAsync());
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateTemplateAsync(template.Id, template.Version,
+            new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Updated", "Theater", "{{unknown}}", "<p>Body</p>", "Body")));
+
+        Assert.Equal("Original", (await db.EmailTemplates.SingleAsync()).Name);
+        Assert.DoesNotContain(await db.AuditEvents.ToListAsync(), x => x.EventType == "EmailTemplateUpdated");
+    }
+
+    [Fact]
+    public async Task Template_update_invalidates_an_already_prepared_campaign_before_send()
+    {
+        await using var db = CreateDb();
+        await SeedConfigurationAsync(db, 10);
+        var batch = new InvitationBatch { Name = "Template freshness", DeadlineUtc = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty { BatchId = batch.Id, PrimaryGuestName = "Alex Guest", Email = "alex@example.test", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("template-token") };
+        var token = new RsvpToken { PartyId = party.Id, Hash = party.TokenHash, RawToken = "template-token", IssuedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(batch, party, token);
+        await db.SaveChangesAsync();
+        var service = CreateEmailService(db);
+        await service.SaveSenderSettingsAsync(new EmailSenderSettingsInput("events@theater.org", "support@theater.org", 500, true), null);
+        await service.CreateTemplateAsync(new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Invitation", "Theater", "Original", "<p>Original</p>", "Original"));
+        var template = Assert.Single(await service.GetTemplatesAsync());
+        var campaign = await service.PrepareInitialCampaignAsync(batch.Id, template.Id);
+
+        await service.UpdateTemplateAsync(template.Id, template.Version, new EmailTemplateInput(EmailTemplateType.InitialInvitation, "Invitation", "Theater", "Updated", "<p>Updated</p>", "Updated"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendCampaignAsync(campaign.Id, campaign.Version));
+        Assert.Equal(EmailCampaignState.Invalidated, (await db.EmailCampaigns.SingleAsync(x => x.Id == campaign.Id)).State);
+    }
+
+    [Fact]
     public async Task Prepared_campaign_is_invalidated_when_party_material_changes()
     {
         await using var db = CreateDb();
@@ -603,7 +686,7 @@ public sealed class OrganizerServiceTests
 
     private static OrganizerService CreateService(InvitationDbContext db, IOrganizerAuthorization? authorization = null, string environmentName = "Development") => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new TestEnvironment(environmentName));
     private static BatchImportService CreateImportService(InvitationDbContext db, IOrganizerAuthorization? authorization = null) => new(db, new TestDbContextFactory(db), new FixedClock(), authorization ?? new AllowedAuthorization(), new TransactionRetry(), new BatchImportPreviewStore());
-    private static EmailCampaignService CreateEmailService(InvitationDbContext db) => new(db, new TestDbContextFactory(db), new AllowedAuthorization(), new FixedClock(), new TransactionRetry(), new EmailTemplateRenderer(), new AcceptedEmailProvider(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["PublicApp:BaseUrl"] = "https://rsvp.example.org" }).Build());
+    private static EmailCampaignService CreateEmailService(InvitationDbContext db, IOrganizerAuthorization? authorization = null) => new(db, new TestDbContextFactory(db), authorization ?? new AllowedAuthorization(), new FixedClock(), new TransactionRetry(), new EmailTemplateRenderer(), new AcceptedEmailProvider(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["PublicApp:BaseUrl"] = "https://rsvp.example.org" }).Build());
 
     private static async Task SeedConfigurationAsync(InvitationDbContext db, int capacity)
     {

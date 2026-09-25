@@ -112,8 +112,8 @@ remaining capacity = 50
 - **FR-097** A provider API acceptance must not be described as confirmed delivery.
 - **FR-098** Bounce, complaint, retry, and suppression behavior must follow the approved email policy.
 - **FR-099** The system must not claim or imply guaranteed inbox delivery.
-- **FR-100** A saved template must be immediately selectable without a separate approval state. Preview and test send remain available but are not activation gates.
-- **FR-101** Campaign preparation must pair one eligible audience or batch with one saved template and produce a reviewable campaign. Any later change to source party data, deadline, token, sender, template, or eligibility must invalidate that review.
+- **FR-100** A saved template must be immediately selectable without a separate approval state. Authorized operators may edit it in place with optimistic concurrency protection. Preview and test send remain available but are not activation gates.
+- **FR-101** Campaign preparation must pair one eligible audience or batch with one saved template and produce a reviewable campaign. Any later change to source party data, deadline, token, sender, template, or eligibility must invalidate that review before sending.
 - **FR-102** One confirmed `Send now` action from campaign review must begin server-side sending; the workflow must not require a separate confirm-to-queue action followed by another confirmed send action.
 - **FR-103** Reaching the configured daily ceiling must pause the campaign with sent and remaining counts and the earliest continuation date. An authorized organizer may continue after reset without another confirmation.
 - **FR-104** Campaign detail must allow an organizer to select prior recipients for an auditable resend using their current active links, subject to current eligibility and suppression checks.

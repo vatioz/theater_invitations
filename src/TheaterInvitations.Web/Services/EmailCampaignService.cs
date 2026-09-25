@@ -45,6 +45,11 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         await db.EmailTemplates.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc)
             .Select(x => new EmailTemplateSummary(x.Id, x.Type, x.Name, x.FromDisplayName, x.Subject, x.State, x.Version)).ToListAsync(cancellationToken);
 
+    public async Task<EmailTemplateDetail?> GetTemplateAsync(Guid templateId, CancellationToken cancellationToken = default) =>
+        await db.EmailTemplates.AsNoTracking().Where(x => x.Id == templateId)
+            .Select(x => new EmailTemplateDetail(x.Id, x.Type, x.Name, x.FromDisplayName ?? string.Empty, x.Subject, x.HtmlBody, x.PlainTextBody, x.State, x.Version))
+            .SingleOrDefaultAsync(cancellationToken);
+
     public async Task CreateTemplateAsync(EmailTemplateInput input, CancellationToken cancellationToken = default)
     {
         var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
@@ -52,6 +57,28 @@ public sealed class EmailCampaignService(InvitationDbContext db, IDbContextFacto
         var template = new EmailTemplate { Type = input.Type, Name = input.Name.Trim(), FromDisplayName = input.FromDisplayName.Trim(), Subject = input.Subject.Trim(), HtmlBody = input.HtmlBody, PlainTextBody = input.PlainTextBody, State = EmailTemplateState.Active, ContentDigest = Digest(input), CreatedAtUtc = clock.UtcNow, CreatedBy = actor };
         db.EmailTemplates.Add(template);
         AddAudit(db, "EmailTemplateCreated", "Accepted", actor, null, null, null);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateTemplateAsync(Guid templateId, uint expectedVersion, EmailTemplateInput input, CancellationToken cancellationToken = default)
+    {
+        var actor = await authorization.RequireAsync("OrganizerOperator", cancellationToken);
+        ValidateTemplate(input);
+        var template = await db.EmailTemplates.SingleOrDefaultAsync(x => x.Id == templateId, cancellationToken)
+            ?? throw new InvalidOperationException("E-mailová šablona nebyla nalezena.");
+        if (template.Version != expectedVersion)
+        {
+            throw new StaleDataException("E-mailová šablona se po otevření změnila. Byly načteny aktuální hodnoty.");
+        }
+
+        template.Type = input.Type;
+        template.Name = input.Name.Trim();
+        template.FromDisplayName = input.FromDisplayName.Trim();
+        template.Subject = input.Subject.Trim();
+        template.HtmlBody = input.HtmlBody;
+        template.PlainTextBody = input.PlainTextBody;
+        template.ContentDigest = Digest(input);
+        AddAudit(db, "EmailTemplateUpdated", "Accepted", actor, null, null, null);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -577,6 +604,7 @@ public sealed record EmailSenderSettings(string FromAddress, string ReplyToAddre
 public sealed record EmailSenderSettingsInput(string FromAddress, string ReplyToAddress, int DailySendCeiling, bool IsDomainVerified);
 public sealed record EmailTemplateInput(EmailTemplateType Type, string Name, string FromDisplayName, string Subject, string HtmlBody, string PlainTextBody);
 public sealed record EmailTemplateSummary(Guid Id, EmailTemplateType Type, string Name, string? FromDisplayName, string Subject, EmailTemplateState State, uint Version);
+public sealed record EmailTemplateDetail(Guid Id, EmailTemplateType Type, string Name, string FromDisplayName, string Subject, string HtmlBody, string PlainTextBody, EmailTemplateState State, uint Version);
 public sealed record EmailCampaignPage(IReadOnlyList<EmailCampaignSummary> Campaigns, int TotalCount, int PageIndex, int PageSize)
 {
     public int PageCount => Math.Max(1, (int)Math.Ceiling(TotalCount / (double)PageSize));
