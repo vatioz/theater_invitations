@@ -1,4 +1,5 @@
 using TheaterInvitations.Web.Components;
+using TheaterInvitations.Domain;
 using Microsoft.EntityFrameworkCore;
 using TheaterInvitations.Web.Data;
 using TheaterInvitations.Web.Services;
@@ -91,6 +92,12 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapStaticAssets();
+app.MapGet("/organizer/parties/export", async (string? search, InvitationStatus? status, Guid? batchId, OrganizerService organizerService, IClock clock, CancellationToken cancellationToken) =>
+{
+    var content = await organizerService.ExportPartiesCsvAsync(search, status, batchId, cancellationToken);
+    var fileName = $"parties-{clock.UtcNow:yyyyMMdd-HHmmss}.csv";
+    return Results.File(content, "text/csv; charset=utf-8", fileName);
+}).RequireAuthorization("OrganizerViewer");
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 app.MapGet("/account/logout", async (SignInManager<ApplicationUser> signInManager) => { await signInManager.SignOutAsync(); return Results.Redirect("/account/login"); });

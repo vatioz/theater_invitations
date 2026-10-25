@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.FileProviders;
@@ -91,6 +92,78 @@ public sealed class OrganizerServiceTests
         Assert.Equal(1, result.PartyCount);
         Assert.Single(result.Parties);
         Assert.Equal("Morgan Guest", result.Parties.Single().Name);
+    }
+
+    [Fact]
+    public async Task Party_export_applies_filters_without_pagination_and_uses_stable_ordering()
+    {
+        await using var db = CreateDb();
+        var includedBatch = new InvitationBatch { Name = "Included", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var excludedBatch = new InvitationBatch { Name = "Excluded", DeadlineUtc = DateTimeOffset.UtcNow.AddDays(1), CreatedAtUtc = DateTimeOffset.UtcNow };
+        db.AddRange(includedBatch, excludedBatch);
+        for (var index = 29; index >= 0; index--)
+        {
+            db.InvitationParties.Add(new InvitationParty
+            {
+                BatchId = includedBatch.Id,
+                PrimaryGuestName = $"Guest {index:D2}",
+                Email = $"guest{index:D2}@example.test",
+                Company = "Export Company",
+                AllocatedSeats = 1,
+                TokenHash = RsvpService.HashToken($"included-{index}")
+            });
+        }
+        db.InvitationParties.Add(new InvitationParty { BatchId = excludedBatch.Id, PrimaryGuestName = "Excluded Guest", Email = "excluded@example.test", Company = "Export Company", AllocatedSeats = 1, TokenHash = RsvpService.HashToken("excluded") });
+        await db.SaveChangesAsync();
+
+        var bytes = await CreateService(db).ExportPartiesCsvAsync("Export Company", InvitationStatus.Pending, includedBatch.Id);
+        var csv = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+        var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal(31, lines.Length);
+        Assert.Contains("Guest 00", lines[1]);
+        Assert.Contains("Guest 29", lines[^1]);
+        Assert.DoesNotContain("Excluded Guest", csv);
+
+        var emptyCsv = Encoding.UTF8.GetString(await CreateService(db).ExportPartiesCsvAsync("No match", null, null)).TrimStart('\uFEFF');
+        Assert.Single(emptyCsv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries));
+        Assert.StartsWith("party_id,batch_id,batch_name", emptyCsv);
+    }
+
+    [Fact]
+    public async Task Party_export_includes_relevant_fields_and_escapes_csv_without_secrets()
+    {
+        await using var db = CreateDb();
+        var batch = new InvitationBatch { Name = "Dávka, jedna", DeadlineUtc = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero), CreatedAtUtc = DateTimeOffset.UtcNow };
+        var party = new InvitationParty
+        {
+            BatchId = batch.Id,
+            PrimaryGuestName = "Žluťoučký, \"Host\"",
+            Email = "host@example.test",
+            Company = "Company\r\nTwo",
+            Priority = 1,
+            Phone = "+420 777 123 456",
+            AllocatedSeats = 2,
+            TokenHash = RsvpService.HashToken("secret-export-token")
+        };
+        var respondedAt = new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero);
+        Assert.Equal(RsvpResult.Applied, party.Respond(RsvpResponse.Confirm, "Wheelchair, front row", batch.DeadlineUtc, false, respondedAt));
+        db.AddRange(batch, party);
+        await db.SaveChangesAsync();
+
+        var bytes = await CreateService(db).ExportPartiesCsvAsync(null, InvitationStatus.Confirmed, batch.Id);
+        Assert.True(bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble));
+        var csv = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+
+        Assert.StartsWith("party_id,batch_id,batch_name,primary_guest_name,email,company,priority,phone,allocated_seats,status,accessibility_requirements,responded_at_utc,expiration_source,latest_email_state\r\n", csv);
+        Assert.Contains("\"Dávka, jedna\"", csv);
+        Assert.Contains("\"Žluťoučký, \"\"Host\"\"\"", csv);
+        Assert.Contains("\"Company\r\nTwo\"", csv);
+        Assert.Contains("\"Wheelchair, front row\"", csv);
+        Assert.Contains("2026-07-25T12:00:00.0000000+00:00", csv);
+        Assert.DoesNotContain("token_hash", csv, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("version", csv, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(party.TokenHash, csv);
     }
 
     [Fact]

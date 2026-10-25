@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Data;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Components.QuickGrid;
 using TheaterInvitations.Domain;
@@ -38,6 +39,78 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
         var sorted = request.SortByColumn is null ? projected.OrderBy(x => x.Name) : request.ApplySorting(projected);
         var items = await sorted.Skip(request.StartIndex).Take(request.Count ?? 25).ToArrayAsync(request.CancellationToken);
         return GridItemsProviderResult.From(items, totalCount);
+    }
+
+    public async Task<byte[]> ExportPartiesCsvAsync(string? search, InvitationStatus? status, Guid? batchId = null, CancellationToken cancellationToken = default)
+    {
+        search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        await using var exportDb = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var query = from party in exportDb.InvitationParties.AsNoTracking()
+                    join batch in exportDb.InvitationBatches.AsNoTracking() on party.BatchId equals batch.Id
+                    select new { party, batch };
+        if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.party.PrimaryGuestName.Contains(search) || x.party.Email.Contains(search) || (x.party.Company != null && x.party.Company.Contains(search)));
+        if (status is not null) query = query.Where(x => x.party.Status == status);
+        if (batchId is not null) query = query.Where(x => x.batch.Id == batchId);
+
+        var rows = await query
+            .OrderBy(x => x.party.PrimaryGuestName)
+            .ThenBy(x => x.party.Id)
+            .Select(x => new PartyExportRow(
+                x.party.Id,
+                x.batch.Id,
+                x.batch.Name,
+                x.party.PrimaryGuestName,
+                x.party.Email,
+                x.party.Company,
+                x.party.Priority,
+                x.party.Phone,
+                x.party.AllocatedSeats,
+                x.party.Status,
+                x.party.AccessibilityRequirements,
+                x.party.RespondedAtUtc,
+                x.party.ExpirationSource,
+                exportDb.EmailDispatches
+                    .Where(dispatch => dispatch.PartyId == x.party.Id)
+                    .OrderByDescending(dispatch => dispatch.Id)
+                    .Select(dispatch => (EmailDispatchState?)dispatch.State)
+                    .FirstOrDefault()))
+            .ToListAsync(cancellationToken);
+
+        var csv = new StringBuilder();
+        AppendCsvRow(csv, "party_id", "batch_id", "batch_name", "primary_guest_name", "email", "company", "priority", "phone", "allocated_seats", "status", "accessibility_requirements", "responded_at_utc", "expiration_source", "latest_email_state");
+        foreach (var row in rows)
+        {
+            AppendCsvRow(csv,
+                row.PartyId.ToString(),
+                row.BatchId.ToString(),
+                row.BatchName,
+                row.PrimaryGuestName,
+                row.Email,
+                row.Company,
+                row.Priority.ToString(CultureInfo.InvariantCulture),
+                row.Phone,
+                row.AllocatedSeats.ToString(CultureInfo.InvariantCulture),
+                row.Status.ToString(),
+                row.AccessibilityRequirements,
+                row.RespondedAtUtc?.ToString("O", CultureInfo.InvariantCulture),
+                row.ExpirationSource.ToString(),
+                row.LatestEmailState?.ToString());
+        }
+
+        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+        return [.. encoding.GetPreamble(), .. encoding.GetBytes(csv.ToString())];
+    }
+
+    private static void AppendCsvRow(StringBuilder csv, params string?[] values)
+    {
+        csv.AppendJoin(',', values.Select(EscapeCsvValue));
+        csv.Append("\r\n");
+    }
+
+    private static string EscapeCsvValue(string? value)
+    {
+        value ??= string.Empty;
+        return value.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
     }
 
     public async ValueTask<GridItemsProviderResult<OrganizerAudit>> GetAuditsAsync(GridItemsProviderRequest<OrganizerAudit> request)
@@ -341,6 +414,7 @@ public sealed class OrganizerService(InvitationDbContext db, IDbContextFactory<I
     }
     private void AddAudit(InvitationDbContext operationDb, string type, string outcome, Guid? batchId, Guid? partyId, string? actor, string? reason, InvitationStatus? previous = null, InvitationStatus? requested = null, InvitationStatus? resulting = null) => operationDb.AuditEvents.Add(new AuditEvent { OccurredAtUtc = clock.UtcNow, EventType = type, Outcome = outcome, ActorCategory = "Organizer", ActorIdentifier = actor, BatchId = batchId, PartyId = partyId, CorrelationId = Guid.NewGuid().ToString("N"), ReasonCategory = reason, PreviousStatus = previous, RequestedStatus = requested, ResultingStatus = resulting });
     private static string CreateRawToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    private sealed record PartyExportRow(Guid PartyId, Guid BatchId, string BatchName, string PrimaryGuestName, string Email, string? Company, int Priority, string? Phone, int AllocatedSeats, InvitationStatus Status, string? AccessibilityRequirements, DateTimeOffset? RespondedAtUtc, ExpirationSource ExpirationSource, EmailDispatchState? LatestEmailState);
 
 }
 
