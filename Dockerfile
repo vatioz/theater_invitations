@@ -1,6 +1,7 @@
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
 WORKDIR /src
 
+COPY global.json ./
 COPY TheaterInvitations.sln ./
 COPY src/TheaterInvitations.Domain/TheaterInvitations.Domain.csproj src/TheaterInvitations.Domain/
 COPY src/TheaterInvitations.Web/TheaterInvitations.Web.csproj src/TheaterInvitations.Web/
@@ -14,7 +15,7 @@ RUN dotnet publish src/TheaterInvitations.Web/TheaterInvitations.Web.csproj \
     --no-restore \
     --output /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14
 WORKDIR /app
 
 ENV ASPNETCORE_URLS=http://+:8080

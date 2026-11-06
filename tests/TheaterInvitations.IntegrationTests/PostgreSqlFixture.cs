@@ -6,7 +6,7 @@ namespace TheaterInvitations.IntegrationTests;
 
 public sealed class PostgreSqlFixture : IAsyncLifetime, IDbContextFactory<InvitationDbContext>
 {
-    private readonly PostgreSqlContainer container = new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+    private readonly PostgreSqlContainer container = new PostgreSqlBuilder("postgres:16-alpine").Build();
     private DbContextOptions<InvitationDbContext> options = null!;
 
     public async Task InitializeAsync()
